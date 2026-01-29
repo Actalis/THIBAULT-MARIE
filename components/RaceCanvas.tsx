@@ -1,18 +1,23 @@
-import React, { useEffect, useRef } from 'react';
+
+
+import React, { useEffect, useRef, useState } from 'react';
 import { 
     PlayerConfig, Tank, Bullet, TrackMark, Particle, 
-    Wall, Debris, TerrainZone, TerrainType, PowerUp, WeaponType, Checkpoint, PowerUpType
+    Wall, Debris, TerrainZone, TerrainType, PowerUp, WeaponType, Checkpoint, Tree, Rock
 } from '../types';
 import { 
     GAME_WIDTH, GAME_HEIGHT, TANK_SPEED, TANK_ROTATION_SPEED, 
     BULLET_SPEED, TANK_SIZE, BULLET_SIZE, COOLDOWN_FRAMES, 
     TRACK_SPACING, COLORS, MAX_TRACKS, TRACK_FADE_DURATION,
-    TANK_BASE_HEALTH, END_SEQUENCE_DURATION, TERRAIN_MODIFIERS,
-    WALL_MAX_HEALTH, DEBRIS_MAX_HEALTH, RESPAWN_TIME, XP_PER_DISTANCE, LAPS_TO_WIN
+    TANK_BASE_HEALTH, TERRAIN_MODIFIERS,
+    WALL_MAX_HEALTH, DEBRIS_MAX_HEALTH, XP_PER_DISTANCE, LAPS_TO_WIN, RACE_REPLAY_SECONDS
 } from '../constants';
-import { checkCollision, getRaceSpawnPosition, getInitialAngle, generateRaceTrack, findSafeSpawnPosition } from '../utils/gameLogic';
+import { checkCollision, getRaceSpawnPosition, generateRaceTrack } from '../utils/gameLogic';
 import { AudioSystem } from '../utils/audio';
-import { drawTank, drawWreck } from '../utils/tankUtils';
+import { drawTank, drawWreck, drawGroundTexture, drawZone } from '../utils/tankUtils';
+import { drawTreeFoliage, updateTreePhysics, resolveTreeCollisions, resolveDebrisCollection } from '../utils/treeLogic'; 
+import { drawRock, updateRockPhysics, resolveRockCollisions } from '../utils/rockLogic'; 
+import { drawWater, updateWaterPhysics, resolveWaterInteraction } from '../utils/waterLogic';
 
 interface RaceCanvasProps {
     playerConfigs: PlayerConfig[];
@@ -36,72 +41,83 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
     const zonesRef = useRef<TerrainZone[]>([]);
     const checkpointsRef = useRef<Checkpoint[]>([]);
     const debrisRef = useRef<Debris[]>([]);
+    const treesRef = useRef<Tree[]>([]);
+    const rocksRef = useRef<Rock[]>([]); 
     
-    const endSequenceRef = useRef<{
-        isActive: boolean;
-        startTime: number;
-        focusPoint: {x: number, y: number};
-        winnerName: string;
-    }>({ isActive: false, startTime: 0, focusPoint: {x: 0, y: 0}, winnerName: '' });
-
+    // Logic Refs
     const keysPressed = useRef<Set<string>>(new Set());
-    const lastTimeRef = useRef<number>(0);
     const trackIdCounter = useRef<number>(0);
+    const countDownRef = useRef<number>(3);
+    const racePhaseRef = useRef<'COUNTDOWN' | 'RACING' | 'FINISHED'>('COUNTDOWN');
+    const startTimeRef = useRef<number>(0);
 
-    // Initialize Game
+    // Initialisation du Jeu
     useEffect(() => {
+        console.log("Initializing Race Mode...");
         AudioSystem.init();
 
+        // Génération du Niveau
         const levelData = generateRaceTrack();
         wallsRef.current = levelData.walls;
         zonesRef.current = levelData.zones;
         checkpointsRef.current = levelData.checkpoints;
+        treesRef.current = levelData.trees;
+        rocksRef.current = levelData.rocks;
         debrisRef.current = [];
-
-        const activePlayers = playerConfigs.filter(p => p.active);
-        tanksRef.current = activePlayers.map(p => ({
-            id: `p-${p.id}`,
-            playerId: p.id,
-            x: getRaceSpawnPosition(p.id).x,
-            y: getRaceSpawnPosition(p.id).y,
-            width: TANK_SIZE,
-            height: TANK_SIZE,
-            angle: 0, // Face Right
-            color: p.color,
-            vx: 0,
-            vy: 0,
-            health: TANK_BASE_HEALTH,
-            maxHealth: TANK_BASE_HEALTH,
-            score: 0,
-            cooldown: 0,
-            isMoving: false,
-            distanceTraveled: 0,
-            recoilX: 0,
-            recoilY: 0,
-            treadOffset: 0,
-            weapon: WeaponType.NORMAL,
-            ammo: 0,
-            level: 1,
-            xp: 0,
-            deadUntil: 0,
-            lap: 1,
-            nextCheckpointIndex: 0,
-            finishedRace: false,
-            finishTime: 0,
-            stoneCount: 0,
-            lastHealTime: 0
-        }));
-
         bulletsRef.current = [];
         tracksRef.current = [];
         particlesRef.current = [];
+
+        // Initialisation Joueurs
+        const activePlayers = playerConfigs.filter(p => p.active);
+        tanksRef.current = activePlayers.map(p => {
+            const spawn = getRaceSpawnPosition(p.id);
+            return {
+                id: `p-${p.id}`,
+                playerId: p.id,
+                x: spawn.x,
+                y: spawn.y,
+                width: TANK_SIZE,
+                height: TANK_SIZE,
+                angle: 0, // Regarde à droite sur la ligne de départ
+                color: p.color,
+                vx: 0,
+                vy: 0,
+                health: TANK_BASE_HEALTH,
+                maxHealth: TANK_BASE_HEALTH,
+                score: 0,
+                cooldown: 0,
+                isMoving: false,
+                distanceTraveled: 0,
+                recoilX: 0,
+                recoilY: 0,
+                treadOffset: 0,
+                weapon: WeaponType.NORMAL,
+                ammo: 0,
+                level: 1,
+                xp: 0,
+                deadUntil: 0,
+                lap: 1,
+                nextCheckpointIndex: 0,
+                finishedRace: false,
+                finishTime: 0,
+                stoneCount: 0, woodCount: 0, waterCount: 0, electronicsCount: 0,
+                lastHealTime: 0, lastWaterCollectTime: 0,
+                muddyTreadsTimer: 0, isSoldier: false, stunnedUntil: 0,
+                attachedBranches: 0, lastImpactTime: 0
+            };
+        });
+
+        // Reset Etat
         keysPressed.current.clear();
         trackIdCounter.current = 0;
-        endSequenceRef.current = { isActive: false, startTime: 0, focusPoint: {x: 0, y: 0}, winnerName: '' };
+        racePhaseRef.current = 'COUNTDOWN';
+        countDownRef.current = 3;
 
+        // Gestion Clavier
         const handleKeyDown = (e: KeyboardEvent) => {
             keysPressed.current.add(e.code);
-            if (e.code === 'KeyP' && !e.repeat && !endSequenceRef.current.isActive) {
+            if (e.code === 'KeyP' && !e.repeat && racePhaseRef.current === 'RACING') {
                 onPause();
             }
         };
@@ -110,357 +126,382 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
 
+        // Compte à Rebours (Timer séparé pour la logique UI)
+        let cdTimer: ReturnType<typeof setInterval>;
+        if (racePhaseRef.current === 'COUNTDOWN') {
+            AudioSystem.uiClick(); // 3
+            cdTimer = setInterval(() => {
+                countDownRef.current--;
+                if (countDownRef.current > 0) {
+                    AudioSystem.uiClick(); // 2, 1
+                } else if (countDownRef.current === 0) {
+                    AudioSystem.shoot(); // GO!
+                    racePhaseRef.current = 'RACING';
+                    startTimeRef.current = performance.now();
+                    clearInterval(cdTimer);
+                }
+            }, 1000);
+        }
+
+        // Lancement Boucle
+        requestRef.current = requestAnimationFrame(animate);
+
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
-            AudioSystem.stopAllEngines();
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            clearInterval(cdTimer);
+            AudioSystem.stopAllEngines();
         };
-    }, []); 
+    }, []); // Run once on mount
 
+    // Boucle d'Animation Principale
     const animate = (time: number) => {
-        if (isPaused) {
-            AudioSystem.suspend();
-            return;
-        } else {
+        if (!isPaused) {
             AudioSystem.resume();
+            update(time);
+            draw(time);
+        } else {
+            AudioSystem.suspend();
         }
-        lastTimeRef.current = time;
-
-        let timeScale = 1.0;
-        if (endSequenceRef.current.isActive) timeScale = 0.2;
-
-        updateGame(time, timeScale);
-        
-        // Camera
-        let zoom = 0.8; // Zoom out for race
-        let center = { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 };
-
-        if (endSequenceRef.current.isActive) {
-            const progress = (time - endSequenceRef.current.startTime) / END_SEQUENCE_DURATION;
-            if (progress >= 1) {
-                finishGame();
-                return; 
-            }
-            const ease = 1 - Math.pow(1 - progress, 3); 
-            zoom = 0.8 + ease * 1.5; 
-            const startX = GAME_WIDTH / 2;
-            const startY = GAME_HEIGHT / 2;
-            center.x = startX + (endSequenceRef.current.focusPoint.x - startX) * ease;
-            center.y = startY + (endSequenceRef.current.focusPoint.y - startY) * ease;
-        }
-
-        draw(time, zoom, center);
         requestRef.current = requestAnimationFrame(animate);
     };
 
-    useEffect(() => {
-        if (!isPaused) {
-            AudioSystem.resume();
-            lastTimeRef.current = performance.now();
-            requestRef.current = requestAnimationFrame(animate);
-        } else {
-            AudioSystem.suspend();
-            if (requestRef.current) cancelAnimationFrame(requestRef.current);
-        }
-        return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
-    }, [isPaused]);
+    // --- UPDATE LOGIC ---
+    const update = (now: number) => {
+        const dt = 1.0; // Time scale fixe pour simplicité
 
+        // Physique Environnement
+        updateWaterPhysics();
+        treesRef.current.forEach(t => updateTreePhysics(t, dt, now));
+        rocksRef.current.forEach(r => updateRockPhysics(r, dt));
+        
+        // Collisions Globales
+        resolveTreeCollisions(tanksRef.current, bulletsRef.current, treesRef.current, particlesRef.current, now);
+        resolveRockCollisions(tanksRef.current, rocksRef.current, bulletsRef.current, particlesRef.current, now);
+        resolveDebrisCollection(tanksRef.current, particlesRef.current);
 
-    const finishGame = () => {
-         AudioSystem.stopAllEngines();
-         const scores = tanksRef.current.map(t => ({
-             name: playerConfigs.find(c => c.id === t.playerId)?.name || "Inconnu",
-             // Award 1 point for winning the race, instead of 10
-             score: t.score + (t.finishedRace ? 1 : 0),
-             profileId: playerConfigs.find(c => c.id === t.playerId)?.profileId
-         }));
-         onGameOver(endSequenceRef.current.winnerName, scores);
-    }
-
-    const updateGame = (now: number, timeScale: number) => {
+        // Mise à jour Tanks
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
 
         tanksRef.current.forEach(tank => {
             if (tank.health <= 0) {
                 AudioSystem.stopEngine(tank.id);
-                if (tank.deadUntil > 0 && now >= tank.deadUntil && !endSequenceRef.current.isActive) {
-                    const spawn = findSafeSpawnPosition(wallsRef.current, tanksRef.current);
-                    tank.x = spawn.x; tank.y = spawn.y; tank.health = tank.maxHealth; tank.deadUntil = 0; tank.isMoving = false;
+                // Respawn auto en course après 3s
+                if (!tank.deadUntil) tank.deadUntil = now + 3000;
+                if (now > tank.deadUntil) {
+                    // Respawn au dernier checkpoint validé
+                    const cp = checkpointsRef.current[(tank.nextCheckpointIndex - 1 + checkpointsRef.current.length) % checkpointsRef.current.length];
+                    tank.x = cp.x + cp.width/2;
+                    tank.y = cp.y + cp.height/2;
+                    tank.health = tank.maxHealth;
+                    tank.deadUntil = 0;
+                    tank.angle = 0; // Reset angle
                 }
                 return;
             }
 
+            // Mouvement bloqué pendant countdown
+            if (racePhaseRef.current === 'COUNTDOWN') {
+                AudioSystem.updateEngine(tank.id, 0, TANK_SPEED, TerrainType.ASPHALT);
+                return; 
+            }
+
+            if (tank.finishedRace) {
+                AudioSystem.updateEngine(tank.id, 0, TANK_SPEED, TerrainType.ASPHALT);
+                return;
+            }
+
+            // Input Handling
             const config = playerConfigs.find(c => c.id === tank.playerId);
             if (!config) return;
-            const controls = config.controls;
+            
+            let move = 0;
+            let rotate = 0;
+            let shoot = false;
 
-            let currentTerrain: TerrainType = TerrainType.ASPHALT; // Default for race
-            for (const zone of zonesRef.current) {
-                if (tank.x >= zone.x && tank.x <= zone.x + zone.width &&
-                    tank.y >= zone.y && tank.y <= zone.y + zone.height) {
-                    currentTerrain = zone.type;
+            // Clavier
+            if (keysPressed.current.has(config.controls.up)) move = 1;
+            else if (keysPressed.current.has(config.controls.down)) move = -0.6;
+            if (keysPressed.current.has(config.controls.left)) rotate = -1;
+            if (keysPressed.current.has(config.controls.right)) rotate = 1;
+            if (keysPressed.current.has(config.controls.shoot)) shoot = true;
+
+            // Gamepad override
+            const gp = gamepads[tank.playerId - 1];
+            if (gp) {
+                if (Math.abs(gp.axes[1]) > 0.1) move = -gp.axes[1];
+                if (Math.abs(gp.axes[0]) > 0.1) rotate = gp.axes[0];
+                if (gp.buttons[0].pressed) shoot = true;
+            }
+
+            // Physique Tank
+            let currentTerrain = TerrainType.ASPHALT;
+            // Check Terrain
+            for(const zone of zonesRef.current) {
+                if (zone.shape === 'rect') {
+                    if (tank.x >= zone.x && tank.x <= zone.x + zone.width && tank.y >= zone.y && tank.y <= zone.y + zone.height) {
+                        currentTerrain = zone.type;
+                    }
+                } else if (zone.shape === 'circle') {
+                    const dx = tank.x - zone.x; const dy = tank.y - zone.y;
+                    if (dx*dx + dy*dy < zone.width * zone.width) currentTerrain = zone.type;
                 }
             }
-            let terrainMod = TERRAIN_MODIFIERS[currentTerrain];
             
-            // Checkpoints Logic
-            const nextCP = checkpointsRef.current[tank.nextCheckpointIndex];
-            if (tank.x > nextCP.x && tank.x < nextCP.x + nextCP.width &&
-                tank.y > nextCP.y && tank.y < nextCP.y + nextCP.height) {
-                    tank.nextCheckpointIndex = (tank.nextCheckpointIndex + 1) % checkpointsRef.current.length;
-                    if (tank.nextCheckpointIndex === 0) {
-                        tank.lap++;
-                        AudioSystem.lap();
-                        if (tank.lap > LAPS_TO_WIN && !tank.finishedRace) {
-                            tank.finishedRace = true;
-                            if (!endSequenceRef.current.isActive) {
-                                endSequenceRef.current = {
-                                    isActive: true,
-                                    startTime: now,
-                                    focusPoint: {x: tank.x, y: tank.y},
-                                    winnerName: config.name
-                                };
-                            }
-                        }
-                    }
-            }
+            // Eau
+            zonesRef.current.forEach(z => resolveWaterInteraction(tank, z, now, particlesRef.current));
 
-            tank.isMoving = false;
-            let moveSpeed = 0;
-            let rotateDir = 0;
-            let shootPressed = false;
-            const gp = gamepads[tank.playerId - 1]; 
-
-            if (gp) {
-                const deadzone = 0.2;
-                if (Math.abs(gp.axes[0]) > deadzone) rotateDir = gp.axes[0];
-                if (Math.abs(gp.axes[1]) > deadzone) { moveSpeed = -gp.axes[1] * TANK_SPEED * terrainMod; tank.isMoving = true; }
-                if (gp.buttons[0].pressed || gp.buttons[5].pressed || gp.buttons[7].pressed) shootPressed = true;
-            } 
+            const terrainMod = TERRAIN_MODIFIERS[currentTerrain] || 1.0;
+            const finalSpeed = move * TANK_SPEED * terrainMod;
             
-            if (!endSequenceRef.current.isActive) {
-                if (keysPressed.current.has(controls.left)) rotateDir = -1;
-                if (keysPressed.current.has(controls.right)) rotateDir = 1;
-                if (keysPressed.current.has(controls.up)) { moveSpeed = TANK_SPEED * terrainMod; tank.isMoving = true; } 
-                else if (keysPressed.current.has(controls.down)) { moveSpeed = -TANK_SPEED * 0.6 * terrainMod; tank.isMoving = true; }
-                if (keysPressed.current.has(controls.shoot)) shootPressed = true;
-            }
+            tank.angle += rotate * TANK_ROTATION_SPEED * dt;
+            tank.vx = Math.cos(tank.angle) * finalSpeed;
+            tank.vy = Math.sin(tank.angle) * finalSpeed;
+            tank.isMoving = Math.abs(finalSpeed) > 0.1;
 
-            const speedBuff = 1 + (tank.level * 0.05);
-            moveSpeed *= speedBuff;
-
-            // Engine Audio Update
-            AudioSystem.updateEngine(tank.id, tank.isMoving ? moveSpeed : 0, TANK_SPEED * 1.5);
-
-            tank.angle += rotateDir * TANK_ROTATION_SPEED * timeScale;
-            tank.vx = (Math.cos(tank.angle) * moveSpeed) * timeScale;
-            tank.vy = (Math.sin(tank.angle) * moveSpeed) * timeScale;
-
-            if (tank.isMoving) {
-                tank.treadOffset += Math.abs(moveSpeed) * timeScale;
-                tank.xp += XP_PER_DISTANCE * Math.abs(moveSpeed/TANK_SPEED) * timeScale;
-            }
-
-            tank.x += tank.recoilX * timeScale; tank.y += tank.recoilY * timeScale;
+            // Application Mouvement + Recul
+            tank.x += (tank.vx + tank.recoilX) * dt;
+            tank.y += (tank.vy + tank.recoilY) * dt;
             tank.recoilX *= 0.9; tank.recoilY *= 0.9;
 
-            const nextX = tank.x + tank.vx; const nextY = tank.y + tank.vy;
-            let collided = false;
-            
-            const tankRect = { x: nextX - TANK_SIZE/2, y: nextY - TANK_SIZE/2, width: TANK_SIZE, height: TANK_SIZE, id: '', angle: 0, vx: 0, vy: 0 };
-            wallsRef.current.forEach(w => { if (checkCollision(tankRect, w)) collided = true; });
-
-            if (!collided) { tank.x = nextX; tank.y = nextY; } 
-            else { tank.recoilX -= tank.vx * 0.25; tank.recoilY -= tank.vy * 0.25; }
-
-            // Combat logic (Simplified for race - bumping slows down)
-            tanksRef.current.forEach(other => {
-                if (tank === other || other.health <= 0) return;
-                if (checkCollision(tank, other)) {
-                    const dx = tank.x - other.x; const dy = tank.y - other.y;
-                    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-                    const nx = dx / dist; const ny = dy / dist;
-                    const overlap = TANK_SIZE - dist + 4;
-                    if (overlap > 0) { tank.x += nx * overlap * 0.5; tank.y += ny * overlap * 0.5; }
-                    tank.recoilX += nx * 12.0; tank.recoilY += ny * 12.0;
+            // Collisions Murs (Bordures)
+            wallsRef.current.forEach(w => {
+                if(checkCollision(tank, w)) {
+                    // Simple rebond
+                    tank.x -= tank.vx * 2; tank.y -= tank.vy * 2;
+                    tank.recoilX -= tank.vx; tank.recoilY -= tank.vy;
                 }
             });
 
+            // Collisions entre Tanks
+            tanksRef.current.forEach(other => {
+                if (other !== tank && other.health > 0 && checkCollision(tank, other)) {
+                    const dx = tank.x - other.x; const dy = tank.y - other.y;
+                    const d = Math.sqrt(dx*dx + dy*dy) || 1;
+                    tank.x += (dx/d)*2; tank.y += (dy/d)*2;
+                    tank.recoilX += (dx/d)*5; tank.recoilY += (dy/d)*5;
+                }
+            });
+
+            // Audio Moteur
+            AudioSystem.updateEngine(tank.id, tank.isMoving ? finalSpeed : 0, TANK_SPEED * 1.5, currentTerrain);
+
+            // Traces
             if (tank.isMoving) {
-                tank.distanceTraveled += Math.abs(moveSpeed * timeScale);
+                tank.distanceTraveled += Math.abs(finalSpeed);
                 if (tank.distanceTraveled > TRACK_SPACING) {
-                    const trackColor = currentTerrain === TerrainType.MUD ? '#291100' : (currentTerrain === TerrainType.SAND ? '#a8a29e' : '#1c1917');
-                    tracksRef.current.push({id: `t-${trackIdCounter.current++}`, x: tank.x, y: tank.y, angle: tank.angle, color: trackColor, createdAt: now, opacity: 1});
+                    const c = currentTerrain === TerrainType.MUD ? '#3f2e00' : '#222';
+                    tracksRef.current.push({
+                        id: `t-${trackIdCounter.current++}`, x: tank.x, y: tank.y, angle: tank.angle, 
+                        color: c, createdAt: now, opacity: 0.6
+                    });
                     tank.distanceTraveled = 0;
-                    if (tracksRef.current.length > MAX_TRACKS) tracksRef.current.shift();
+                    if(tracksRef.current.length > MAX_TRACKS) tracksRef.current.shift();
                 }
             }
 
-            if (tank.cooldown > 0) tank.cooldown -= 1 * timeScale;
-            if (shootPressed && tank.cooldown <= 0 && !endSequenceRef.current.isActive) {
-                 AudioSystem.shoot();
-                 const barrelLen = TANK_SIZE / 2 + 18;
-                 
-                 // Recoil
-                 tank.recoilX -= Math.cos(tank.angle) * 3;
-                 tank.recoilY -= Math.sin(tank.angle) * 3;
-
-                 bulletsRef.current.push({
-                    id: `b-${now}-${tank.playerId}`,
+            // Tir (Autorisé en course pour gêner !)
+            if (tank.cooldown > 0) tank.cooldown--;
+            if (shoot && tank.cooldown <= 0) {
+                AudioSystem.shoot();
+                const barrelLen = TANK_SIZE/2 + 18;
+                bulletsRef.current.push({
+                    id: `b-${now}-${tank.playerId}-${Math.random()}`,
                     ownerId: tank.playerId,
                     x: tank.x + Math.cos(tank.angle) * barrelLen,
                     y: tank.y + Math.sin(tank.angle) * barrelLen,
                     vx: Math.cos(tank.angle) * BULLET_SPEED,
                     vy: Math.sin(tank.angle) * BULLET_SPEED,
                     width: BULLET_SIZE, height: BULLET_SIZE,
-                    damage: 1, angle: tank.angle, type: WeaponType.NORMAL, bouncesLeft: 0
-                 });
-                 tank.cooldown = COOLDOWN_FRAMES;
+                    damage: 1, angle: tank.angle, type: WeaponType.NORMAL, bouncesLeft: 0,
+                    isElectrified: false, homingTargetId: null
+                });
+                tank.cooldown = COOLDOWN_FRAMES;
+                tank.recoilX -= Math.cos(tank.angle)*3; tank.recoilY -= Math.sin(tank.angle)*3;
             }
-        });
 
-        bulletsRef.current = bulletsRef.current.filter(bullet => {
-            const nextX = bullet.x + bullet.vx * timeScale;
-            const nextY = bullet.y + bullet.vy * timeScale;
-            let destroyed = false;
+            // Checkpoints & Tours
+            const nextCP = checkpointsRef.current[tank.nextCheckpointIndex];
+            // Simple hitbox rect check for checkpoint
+            if (tank.x > nextCP.x && tank.x < nextCP.x + nextCP.width &&
+                tank.y > nextCP.y && tank.y < nextCP.y + nextCP.height) {
+                
+                tank.nextCheckpointIndex = (tank.nextCheckpointIndex + 1) % checkpointsRef.current.length;
+                AudioSystem.pickup(); // Bip passage checkpoint
 
-            if (nextX < 0 || nextX > GAME_WIDTH || nextY < 0 || nextY > GAME_HEIGHT) destroyed = true;
-            
-            if (!destroyed) {
-                for(let i=0; i<wallsRef.current.length; i++) {
-                    const w = wallsRef.current[i];
-                    if (nextX > w.x && nextX < w.x + w.width && nextY > w.y && nextY < w.y + w.height) {
-                         AudioSystem.explode();
-                         destroyed = true;
-                         break;
+                if (tank.nextCheckpointIndex === 0) {
+                    tank.lap++;
+                    AudioSystem.lap();
+                    // Victoire ?
+                    if (tank.lap > LAPS_TO_WIN) {
+                        tank.finishedRace = true;
+                        tank.finishTime = now - startTimeRef.current;
+                        AudioSystem.win();
+                        // Fin de partie immédiate pour simplifier
+                        onGameOver(config.name, tanksRef.current.map(t => ({
+                            name: playerConfigs.find(pc => pc.id === t.playerId)?.name || '?',
+                            score: t.finishedRace ? 10 : t.lap, // Score simple
+                            profileId: playerConfigs.find(pc => pc.id === t.playerId)?.profileId
+                        })));
                     }
                 }
             }
-
-            if (!destroyed) {
-                tanksRef.current.forEach(tank => {
-                    if (tank.health <= 0 || tank.playerId === bullet.ownerId) return;
-                    if (checkCollision(bullet, tank)) {
-                        tank.health -= bullet.damage;
-                        AudioSystem.explode();
-                        
-                        // Knockback
-                        const dist = Math.sqrt(bullet.vx*bullet.vx + bullet.vy*bullet.vy) || 1;
-                        tank.recoilX += (bullet.vx/dist) * 8.0;
-                        tank.recoilY += (bullet.vy/dist) * 8.0;
-
-                        if (tank.health <= 0) {
-                            tank.deadUntil = now + 5000; // 5 sec respawn in race
-                            // Killer logic
-                        }
-                        destroyed = true;
-                    }
-                });
-            }
-
-            if (!destroyed) {
-                bullet.x += bullet.vx * timeScale;
-                bullet.y += bullet.vy * timeScale;
-            }
-            return !destroyed;
         });
 
+        // Mise à jour Balles
+        bulletsRef.current = bulletsRef.current.filter(b => {
+            b.x += b.vx * dt; b.y += b.vy * dt;
+            if (b.x < 0 || b.x > GAME_WIDTH || b.y < 0 || b.y > GAME_HEIGHT) return false;
+            
+            // Touche Tanks
+            let hit = false;
+            tanksRef.current.forEach(t => {
+                if (t.health > 0 && t.playerId !== b.ownerId && checkCollision(b, t)) {
+                    t.health -= b.damage;
+                    t.recoilX += b.vx * 0.5; t.recoilY += b.vy * 0.5; // Impact cinétique
+                    AudioSystem.explode();
+                    hit = true;
+                }
+            });
+            // Touche Murs
+            if (!hit) {
+                wallsRef.current.forEach(w => {
+                    if(checkCollision(b, w)) hit = true;
+                });
+            }
+            return !hit;
+        });
+
+        // Particules
         particlesRef.current.forEach(p => {
-            p.x += p.vx * timeScale; p.y += p.vy * timeScale;
-            p.life -= 1 * timeScale;
+            p.x += p.vx * dt; p.y += p.vy * dt;
+            p.life -= dt;
         });
         particlesRef.current = particlesRef.current.filter(p => p.life > 0);
     };
 
-    const draw = (now: number, zoom: number, center: {x: number, y: number}) => {
+    // --- DRAW LOGIC ---
+    const draw = (now: number) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
+        // Reset Transform
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.fillStyle = COLORS.background;
-        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
         
-        const cx = canvas.width / 2;
-        const cy = canvas.height / 2;
-        ctx.translate(cx, cy);
-        ctx.scale(zoom, zoom);
-        ctx.translate(-center.x, -center.y);
+        // Background
+        drawGroundTexture(ctx);
 
-        // Zones
-        zonesRef.current.forEach(zone => {
-            ctx.fillStyle = COLORS[zone.type.toLowerCase() as keyof typeof COLORS] || '#000';
-            ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+        // Camera: Zoom out to fit whole track (Simple & Stable)
+        // Map 1920x1080 -> Fit in Window
+        // Ici on garde 1:1 car le canvas est déjà ajusté par CSS "w-full h-auto"
+        // Mais on applique un léger zoom out pour voir les bords si besoin
+        // ctx.translate(GAME_WIDTH/2, GAME_HEIGHT/2);
+        // ctx.scale(0.9, 0.9);
+        // ctx.translate(-GAME_WIDTH/2, -GAME_HEIGHT/2);
+
+        // Zones (Asphalt, Water, Mud)
+        zonesRef.current.forEach(z => {
+            if (z.type === TerrainType.WATER) drawWater(ctx, z, now);
+            else drawZone(ctx, z);
         });
 
-        // Checkpoints (Visual)
-        checkpointsRef.current.forEach((cp, idx) => {
-             ctx.strokeStyle = idx === 0 ? '#fff' : 'rgba(255,255,255,0.3)';
-             ctx.lineWidth = 4;
-             ctx.setLineDash([20, 20]);
-             ctx.strokeRect(cp.x, cp.y, cp.width, cp.height);
-             ctx.setLineDash([]);
-             if (idx === 3) { // Start/Finish
-                 // Checkerboard
-                 const size = 20;
-                 for(let y=0; y<cp.height; y+=size) {
-                     for(let x=0; x<cp.width; x+=size) {
-                         if ((x/size + y/size) % 2 === 0) {
-                             ctx.fillStyle = '#fff';
-                             ctx.fillRect(cp.x + x, cp.y + y, size, size);
-                         }
-                     }
-                 }
-             }
+        // Checkpoints (Ligne d'arrivée visible)
+        checkpointsRef.current.forEach((cp, i) => {
+            if (i === 5) { // Ligne d'arrivée
+                ctx.save();
+                ctx.translate(cp.x, cp.y);
+                ctx.fillStyle = '#fff';
+                // Damier
+                const s = 20;
+                for(let y=0; y<cp.height; y+=s) {
+                    for(let x=0; x<cp.width; x+=s) {
+                        if ((x/s + y/s) % 2 === 0) ctx.fillRect(x, y, s, s);
+                    }
+                }
+                ctx.restore();
+            }
         });
 
-        tracksRef.current.forEach(track => {
-            const age = now - track.createdAt;
-            // Higher opacity for tracks
-            const opacity = Math.max(0.3, 1 - (age / TRACK_FADE_DURATION));
-            ctx.save();
-            ctx.translate(track.x, track.y);
-            ctx.rotate(track.angle + Math.PI / 2);
-            ctx.fillStyle = track.color;
-            ctx.globalAlpha = opacity * 0.8; 
-            ctx.fillRect(-30, -16, 12, 32); ctx.fillRect(10, -16, 12, 32);
+        // Traces
+        tracksRef.current.forEach(t => {
+            ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.angle + Math.PI/2);
+            ctx.fillStyle = t.color; ctx.globalAlpha = t.opacity;
+            ctx.fillRect(-4, -4, 8, 8);
             ctx.restore();
         });
 
-        wallsRef.current.forEach(w => {
-            ctx.fillStyle = '#333';
-            ctx.fillRect(w.x, w.y, w.width, w.height);
-            ctx.strokeStyle = '#555';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(w.x, w.y, w.width, w.height);
+        // Objets Sol
+        rocksRef.current.forEach(r => drawRock(ctx, r));
+        particlesRef.current.filter(p => p.type === 'stone' || p.type === 'branch').forEach(p => {
+            ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size/2, 0, Math.PI*2); ctx.fill();
         });
 
-        tanksRef.current.filter(t => t.health > 0).forEach(tank => drawTank(ctx, tank, false, now));
-        tanksRef.current.filter(t => t.health <= 0).forEach(tank => drawWreck(ctx, tank, now, false));
+        // Tanks
+        tanksRef.current.forEach(t => {
+            if (t.health > 0) drawTank(ctx, t, false, now);
+            else drawWreck(ctx, t, now, false);
+        });
 
+        // Arbres (Au dessus des tanks)
+        treesRef.current.forEach(t => drawTreeFoliage(ctx, t, now));
+
+        // Balles
         bulletsRef.current.forEach(b => {
-             ctx.fillStyle = COLORS.bullet;
-             ctx.beginPath();
-             ctx.arc(b.x, b.y, b.width/2, 0, Math.PI*2);
-             ctx.fill();
+            ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, Math.PI*2); ctx.fill();
         });
+
+        // --- UI ---
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset pour UI fixe
+
+        // Compte à rebours
+        if (racePhaseRef.current === 'COUNTDOWN' && countDownRef.current > 0) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'italic 900 250px "Rajdhani"';
+            
+            const n = countDownRef.current;
+            ctx.fillStyle = n === 1 ? '#ef4444' : (n === 2 ? '#fbbf24' : '#22c55e');
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 10;
+            ctx.strokeText(n.toString(), GAME_WIDTH/2, GAME_HEIGHT/2);
+            ctx.fillText(n.toString(), GAME_WIDTH/2, GAME_HEIGHT/2);
+        } else if (racePhaseRef.current === 'RACING' && now - startTimeRef.current < 1000) {
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'italic 900 200px "Rajdhani"';
+            ctx.fillStyle = '#fff';
+            ctx.fillText("GO !", GAME_WIDTH/2, GAME_HEIGHT/2);
+        }
+
+        // Infos Course (Tours) en haut à gauche
+        // On ne dessine pas directement l'UI React ici pour perf, mais on peut faire simple
     };
 
     return (
         <div className="relative w-full h-full flex items-center justify-center bg-black">
             <canvas ref={canvasRef} width={GAME_WIDTH} height={GAME_HEIGHT} className="w-full h-auto aspect-video max-h-screen object-contain bg-[#0f0f10]"/>
-            <div className="absolute top-8 left-8 flex flex-col space-y-4 pointer-events-none">
-                <div className="text-white font-bold mb-2 border-b border-white pb-1">3 TOURS POUR GAGNER</div>
-                {tanksRef.current.map((tank) => {
-                    const cfg = playerConfigs.find(c => c.id === tank.playerId);
-                    if(!cfg) return null;
+            
+            {/* UI REACT OVERLAY */}
+            <div className="absolute top-4 left-4 flex flex-col gap-2 pointer-events-none">
+                <div className="text-white font-bold text-xl uppercase bg-black/50 px-4 py-2 rounded border-l-4 border-amber-500">
+                    COURSE - 3 TOURS
+                </div>
+                {tanksRef.current.map(t => {
+                    const cfg = playerConfigs.find(p => p.id === t.playerId);
+                    if (!cfg) return null;
                     return (
-                        <div key={tank.id} className="flex items-center space-x-4 text-white drop-shadow-md text-lg font-bold font-mono">
-                            <div className="w-1 h-8" style={{backgroundColor: cfg.color}}></div>
-                            <span>{cfg.name}</span>
-                            <div className="text-amber-500 font-bold">TOUR {tank.lap}/{LAPS_TO_WIN}</div>
+                        <div key={t.id} className="flex items-center gap-4 bg-black/40 px-3 py-1 rounded text-white font-mono">
+                            <div className="w-3 h-8 rounded" style={{backgroundColor: cfg.color}}></div>
+                            <span className="font-bold text-lg">{cfg.name}</span>
+                            <span className="text-amber-400 font-bold text-xl">
+                                {t.finishedRace ? 'FINI' : `T ${t.lap}/${LAPS_TO_WIN}`}
+                            </span>
                         </div>
                     );
                 })}

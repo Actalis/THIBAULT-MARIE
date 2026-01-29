@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useMemo } from 'react';
 import { GameHistory, PlayerProfile, PlayerConfig, GameMode, PlayerControls } from '../types';
 import { Play, History, Keyboard, Save, Film, Edit2, Shield, AlertTriangle, UserPlus, BarChart2, Check, X, Flag } from 'lucide-react';
 import { AudioSystem } from '../utils/audio';
@@ -58,6 +59,24 @@ const Menu: React.FC<MenuProps> = ({
       });
       setSelectedProfiles(newSelection);
   }, [profiles]); // Dependencies: only run when profiles load
+
+  // Tri des profils : Les profils actuellement sélectionnés (derniers utilisés) apparaissent en premier
+  const getSortedProfiles = (slotIndex: number) => {
+      return [...profiles].sort((a, b) => {
+          // Si le profil est celui sélectionné dans CE slot, il est prioritaire absolu (pour l'affichage par défaut du select)
+          if (a.id === selectedProfiles[slotIndex]) return -1;
+          if (b.id === selectedProfiles[slotIndex]) return 1;
+          
+          // Sinon, on regarde si les profils sont utilisés ailleurs pour les mettre en tête de liste aussi (facilité d'accès)
+          const aSelected = selectedProfiles.includes(a.id);
+          const bSelected = selectedProfiles.includes(b.id);
+          
+          if (aSelected && !bSelected) return -1;
+          if (!aSelected && bSelected) return 1;
+          
+          return 0; // Pas de changement d'ordre sinon
+      });
+  };
 
   const handlePlayerCountChange = (delta: number) => {
     AudioSystem.uiClick();
@@ -320,7 +339,7 @@ const Menu: React.FC<MenuProps> = ({
                                     onChange={(e) => handleProfileSelect(i, e.target.value)}
                                 >
                                     <option value="" disabled className="text-stone-500">Sélectionner un profil</option>
-                                    {profiles.map(p => (
+                                    {getSortedProfiles(i).map(p => (
                                         <option key={p.id} value={p.id}>{p.name}</option>
                                     ))}
                                 </select>

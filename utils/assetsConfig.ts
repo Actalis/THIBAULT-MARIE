@@ -28,7 +28,8 @@ export const ASSET_MANIFEST = {
     'tracks': 'https://raw.githubusercontent.com/ton-repo/assets/main/tracks.wav',
 
     // --- COMBAT ---
-    'shoot_light': 'https://raw.githubusercontent.com/ton-repo/assets/main/shoot.wav',
+    // Lien GitHub Raw converti pour lecture directe
+    'shoot_light': 'https://raw.githubusercontent.com/Actalis/THIBAULT-MARIE/170e92fb7e5e7e465c69607aa261f835a9bb18cc/assets/sons/357%20magnum%209%20mm.mp3',
     'shoot_heavy': 'https://raw.githubusercontent.com/ton-repo/assets/main/shoot_heavy.wav',
     'impact_metal': 'https://raw.githubusercontent.com/ton-repo/assets/main/metal_impact.wav',
     'explosion_small': 'https://raw.githubusercontent.com/ton-repo/assets/main/explode_s.wav',

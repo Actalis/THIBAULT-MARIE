@@ -1,3 +1,5 @@
+
+
 export type Vector2 = { x: number; y: number };
 
 export enum GameState {
@@ -11,7 +13,8 @@ export enum GameState {
 
 export enum GameMode {
   DEATHMATCH = 'DEATHMATCH',
-  RACE = 'RACE'
+  RACE = 'RACE',
+  HORDE = 'HORDE'
 }
 
 export type PlayerControls = {
@@ -74,6 +77,7 @@ export interface Tank extends Entity {
   recoilY: number;
   // Visuals
   treadOffset: number;
+  attachedBranches: number; // Branches collected on chassis (Camouflage)
   // Weapon State
   weapon: WeaponType;
   ammo: number; // For special weapons
@@ -86,9 +90,22 @@ export interface Tank extends Entity {
   nextCheckpointIndex: number;
   finishedRace: boolean;
   finishTime: number;
-  // New Features
+  // Resources
   stoneCount: number;
+  woodCount: number; 
+  waterCount: number; // New Resource
+  electronicsCount: number; 
   lastHealTime: number;
+  lastWaterCollectTime: number; // Timer for water collection
+  // Mud Tracks Logic
+  muddyTreadsTimer: number; // Time in ms remaining for muddy tracks
+  // Infantry Mode
+  isSoldier: boolean; 
+  // Status Effects
+  stunnedUntil: number; // Timestamp until which the tank is immobilized
+  lastImpactTime: number; // For sound debouncing
+  // AI
+  isAI?: boolean;
 }
 
 export interface Bullet extends Entity {
@@ -96,6 +113,9 @@ export interface Bullet extends Entity {
   damage: number;
   type: WeaponType;
   bouncesLeft: number;
+  // New Homing mechanics
+  isElectrified: boolean;
+  homingTargetId: number | null; // PlayerID to chase
 }
 
 export interface TrackMark {
@@ -118,14 +138,15 @@ export interface Particle {
   maxLife: number;
   color: string;
   size: number;
-  type: 'fire' | 'smoke' | 'spark' | 'dust' | 'shockwave';
+  type: 'fire' | 'smoke' | 'spark' | 'dust' | 'shockwave' | 'blood' | 'electric' | 'leaf' | 'branch' | 'stone' | 'ripple';
 }
 
 export enum TerrainType {
   GRASS = 'GRASS',
   SAND = 'SAND',
   MUD = 'MUD',
-  ASPHALT = 'ASPHALT'
+  ASPHALT = 'ASPHALT',
+  WATER = 'WATER'
 }
 
 export interface TerrainZone {
@@ -142,6 +163,14 @@ export interface Wall extends Entity {
   health: number;
   maxHealth: number;
   color: string;
+  isBorder?: boolean;
+}
+
+export interface Rock extends Entity {
+    health: number;
+    maxHealth: number;
+    rotation: number; // Visual rotation
+    shapePoints: {x:number, y:number}[]; // For rugged look
 }
 
 export interface Bunker extends Entity {
@@ -149,6 +178,49 @@ export interface Bunker extends Entity {
     health: number;
     maxHealth: number;
     color: string;
+    // Storage
+    storedStone: number;
+    storedWood: number;
+    storedElectronics?: number;
+    // Upgrade System
+    level: number; // 1 = Basic, 2 = Drone Port, 3 = Mecha Factory
+    upgradeHits: number; // Hits received to validate upgrade
+    lastDroneSpawn: number;
+    lastMechaSpawn: number;
+    // Special Ability
+    hasShield: boolean; // Electric shield
+    // Turret Construction
+    turretBuildStatus: number[]; // Array of 4 integers (0=empty, 1=half, 2=built)
+}
+
+export interface Turret extends Entity {
+    ownerId: number;
+    health: number;
+    maxHealth: number;
+    cooldown: number;
+    targetId: string | null;
+    slotIndex: number; // Which of the 5 slots it occupies (0-3 for corners)
+}
+
+export interface Drone extends Entity {
+    ownerId: number;
+    health: number;
+    maxHealth: number;
+    cooldown: number;
+    targetId: string | null;
+    wobbleOffset: number; // Random offset for oscillation
+    spinSpeed: number; // For destabilization effect
+    isAI?: boolean;
+}
+
+export interface Mecha extends Entity {
+    ownerId: number;
+    health: number;
+    maxHealth: number;
+    cooldown: number;
+    targetId: string | null;
+    isAttacking: boolean; // Visual state for flamethrower
+    isAI?: boolean;
 }
 
 export interface Checkpoint {
@@ -159,6 +231,12 @@ export interface Checkpoint {
   height: number;
 }
 
+export enum DebrisType {
+    STONE = 'STONE',
+    WOOD = 'WOOD',
+    ELECTRONICS = 'ELECTRONICS'
+}
+
 export interface Debris {
   id: string;
   x: number;
@@ -167,6 +245,7 @@ export interface Debris {
   rotation: number;
   health: number; // Crumbles when driven over
   color: string;
+  type: DebrisType;
 }
 
 export interface Tree {
@@ -176,7 +255,15 @@ export interface Tree {
     size: number;
     health: number;
     maxHealth: number;
+    growth: number; // 0.0 to 1.0 (size factor)
     isOnFire: boolean;
+    // Elastic physics
+    wobbleX: number;
+    wobbleY: number;
+    wobbleVelX: number;
+    wobbleVelY: number;
+    // Regrowth
+    regrowAt: number; // Timestamp when it grows back. 0 if alive.
 }
 
 export enum PowerUpType {
@@ -194,15 +281,19 @@ export interface PowerUp {
 }
 
 export interface ReplayFrame {
-  tanks: { id: string, x: number, y: number, angle: number, health: number, maxHealth: number, level: number, isMoving: boolean, color: string, playerId: number, score: number, stoneCount: number }[];
-  bullets: { x: number, y: number, width: number }[];
-  particles: { x: number, y: number, color: string, size: number, type: 'fire' | 'smoke' | 'spark' | 'dust' | 'shockwave' }[];
-  walls: { x: number, y: number, width: number, height: number, health: number }[]; 
-  bunkers: { x: number, y: number, width: number, height: number, health: number, maxHealth: number, color: string }[];
-  debris: { x: number, y: number, size: number, rotation: number, color: string }[];
-  trees: { x: number, y: number, size: number, health: number, isOnFire: boolean }[];
-  powerups: { x: number, y: number, type: PowerUpType }[];
-  tracks: { x: number, y: number, angle: number, color: string, opacity: number }[];
+  tanks: any[];
+  bullets: any[];
+  particles: any[];
+  walls: any[]; 
+  rocks: any[];
+  bunkers: any[];
+  turrets: any[];
+  drones: any[];
+  mechas: any[];
+  debris: any[];
+  trees: any[];
+  powerups: any[];
+  tracks: any[];
   cam: { x: number, y: number, zoom: number };
 }
 

@@ -1,3 +1,8 @@
+
+
+import { TerrainType } from '../types';
+import { Assets } from './AssetManager';
+
 // Advanced Web Audio API Engine
 let audioCtx: AudioContext | null = null;
 let noiseBuffer: AudioBuffer | null = null;
@@ -46,7 +51,7 @@ export const AudioSystem = {
         }
     },
 
-    updateEngine: (tankId: string, speed: number, maxSpeed: number) => {
+    updateEngine: (tankId: string, speed: number, maxSpeed: number, terrain: TerrainType = TerrainType.GRASS, isBlocked: boolean = false) => {
         const ctx = getContext();
         if (ctx.state === 'suspended') ctx.resume();
         if (!noiseBuffer) createNoiseBuffer();
@@ -80,11 +85,30 @@ export const AudioSystem = {
         const speedRatio = Math.abs(speed) / maxSpeed;
         
         // Idle sound vs Moving sound
-        // If speed is basically 0, volume should be 0 (requested: "s'éteindre quand il avance pas")
         const isMoving = speedRatio > 0.05;
         
-        const targetFreq = isMoving ? 80 + (speedRatio * 200) : 0; 
-        const targetVol = isMoving ? 0.2 + (speedRatio * 0.2) : 0; 
+        let baseFreq = 80;
+        let baseVol = 0.2;
+        
+        // Terrain Sound Modification
+        if (terrain === TerrainType.MUD) {
+            baseFreq = 60; // Deeper, struggling
+            engine.filter.Q.value = 0.5; // More muffled
+        } else if (terrain === TerrainType.ASPHALT) {
+            baseFreq = 100; // Higher, cleaner
+            engine.filter.Q.value = 2; // More resonance
+        } else {
+            engine.filter.Q.value = 1; // Default
+        }
+
+        let targetFreq = isMoving ? baseFreq + (speedRatio * 200) : 0; 
+        const targetVol = isMoving ? baseVol + (speedRatio * 0.2) : 0; 
+
+        // LOGIQUE DE BLOCAGE : Si le tank force contre un mur, le son devient grave (moteur qui peine)
+        if (isMoving && isBlocked) {
+            targetFreq /= 3;
+            engine.filter.Q.value = 0.5; // Son plus étouffé
+        }
 
         // Smooth transitions
         engine.filter.frequency.setTargetAtTime(targetFreq, ctx.currentTime, 0.1);
@@ -119,14 +143,84 @@ export const AudioSystem = {
         engines.clear();
     },
 
+    // --- SOUND FX ---
+
+    cinematicBoom: () => {
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+
+        // Deep Drum / Timpani
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.5);
+        
+        gain.gain.setValueAtTime(1.0, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5); // Long tail
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.5);
+
+        // Noise Burst impact
+        const bSize = ctx.sampleRate * 0.2;
+        const b = ctx.createBuffer(1, bSize, ctx.sampleRate);
+        const d = b.getChannelData(0);
+        for(let i=0; i<bSize; i++) d[i] = Math.random() * 2 - 1;
+        const n = ctx.createBufferSource();
+        n.buffer = b;
+        const ng = ctx.createGain();
+        ng.gain.setValueAtTime(0.5, ctx.currentTime);
+        ng.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        const nf = ctx.createBiquadFilter();
+        nf.type = 'lowpass';
+        nf.frequency.value = 800;
+        n.connect(nf);
+        nf.connect(ng);
+        ng.connect(ctx.destination);
+        n.start();
+    },
+
+    cinematicBrass: (pitch: number = 200) => {
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+
+        // Sawtooth for brassy sound
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(pitch, ctx.currentTime);
+        
+        filter.type = 'lowpass';
+        filter.Q.value = 2;
+        filter.frequency.setValueAtTime(pitch * 2, ctx.currentTime);
+        filter.frequency.linearRampToValueAtTime(pitch * 4, ctx.currentTime + 0.1); // Brass "swell"
+
+        gain.gain.setValueAtTime(0, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.8);
+    },
+
     shoot: () => {
+        const source = Assets.playSound('shoot_light', 0.6);
+        if (source) return;
+
         const ctx = getContext();
         if (ctx.state === 'suspended') ctx.resume();
 
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
 
-        // Impulse shot
         osc.type = 'square';
         osc.frequency.setValueAtTime(120, ctx.currentTime);
         osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.15);
@@ -158,7 +252,7 @@ export const AudioSystem = {
 
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
-        filter.frequency.value = 500; // Lower frequency for heavier explosion
+        filter.frequency.value = 500;
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.8, ctx.currentTime);
@@ -183,7 +277,6 @@ export const AudioSystem = {
         const noise = ctx.createBufferSource();
         noise.buffer = buffer;
 
-        // Low rumble
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.setValueAtTime(100, ctx.currentTime);
@@ -203,15 +296,13 @@ export const AudioSystem = {
         const ctx = getContext();
         if (ctx.state === 'suspended') ctx.resume();
         
-        // Metallic Clang
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         
-        osc.type = 'square'; // Harsh metallic base
+        osc.type = 'square';
         osc.frequency.setValueAtTime(150, ctx.currentTime);
         osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.2);
         
-        // Filter to make it sound like heavy metal
         const filter = ctx.createBiquadFilter();
         filter.type = 'bandpass';
         filter.frequency.setValueAtTime(400, ctx.currentTime);
@@ -314,5 +405,87 @@ export const AudioSystem = {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.2);
+    },
+
+    pickup: () => {
+        const source = Assets.playSound('pickup', 0.5);
+        if (source) return;
+
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+        
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1200, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1800, ctx.currentTime + 0.1);
+        
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+    },
+
+    bushImpact: () => {
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+
+        const bufferSize = ctx.sampleRate * 0.4; // Slightly longer for rustle
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        // Bandpass lower and broader for a softer leaf sound
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(400, ctx.currentTime); // Lower frequency (was 800)
+        filter.Q.value = 0.5; // Wider band (was 1)
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.2, ctx.currentTime); // Lower volume (was 0.4)
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4); // Gentle fade out
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        noise.start();
+    },
+
+    win: () => {
+        const source = Assets.playSound('win', 0.6);
+        if (source) return;
+
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+        
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        // Simple major arpeggio
+        const now = ctx.currentTime;
+        osc.type = 'triangle';
+        
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+        osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+        osc.frequency.setValueAtTime(1046.50, now + 0.3); // C6
+        
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.4);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(now + 1.5);
     }
 };
