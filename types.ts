@@ -17,6 +17,14 @@ export enum GameMode {
   HORDE = 'HORDE'
 }
 
+// NOUVEAU : Les classes de tank
+export enum TankClass {
+  ASSAULT = 'ASSAULT', // Équilibré
+  SNIPER = 'SNIPER',   // Lent, tir précis et puissant, longue portée
+  HEAVY = 'HEAVY',     // Très lent, blindé, gros dégâts
+  SCOUT = 'SCOUT'      // Très rapide, fragile, tir rapide
+}
+
 export type PlayerControls = {
   up: string;
   down: string;
@@ -43,6 +51,7 @@ export type PlayerConfig = {
   profileId?: string; // Link to a persisted profile
   name: string;
   color: string;
+  tankClass: TankClass; // NOUVEAU
   controls: PlayerControls;
   active: boolean;
 };
@@ -67,6 +76,7 @@ export enum WeaponType {
 export interface Tank extends Entity {
   playerId: number;
   color: string;
+  tankClass: TankClass; // NOUVEAU : La classe du tank en jeu
   cooldown: number;
   health: number;
   maxHealth: number; // Dynamic based on level
@@ -78,6 +88,7 @@ export interface Tank extends Entity {
   // Visuals
   treadOffset: number;
   attachedBranches: number; // Branches collected on chassis (Camouflage)
+  isInWater: boolean; // Visual state for being submerged
   // Weapon State
   weapon: WeaponType;
   ammo: number; // For special weapons
@@ -100,7 +111,12 @@ export interface Tank extends Entity {
   // Mud Tracks Logic
   muddyTreadsTimer: number; // Time in ms remaining for muddy tracks
   // Infantry Mode
-  isSoldier: boolean; 
+  isSoldier: boolean;
+  soldierBurstCount: number; // Tirs restants dans la rafale
+  soldierReloadTimer: number; // Temps avant prochaine rafale
+  // Infantry Ejection Physics
+  altitude: number; // 0 = sol, >0 = en l'air (effet de saut)
+  verticalVelocity: number; // Vitesse ascensionnelle
   // Status Effects
   stunnedUntil: number; // Timestamp until which the tank is immobilized
   lastImpactTime: number; // For sound debouncing
@@ -113,9 +129,12 @@ export interface Bullet extends Entity {
   damage: number;
   type: WeaponType;
   bouncesLeft: number;
+  startX: number; // To calculate max range
+  startY: number;
   // New Homing mechanics
   isElectrified: boolean;
   homingTargetId: number | null; // PlayerID to chase
+  speed: number; // NOUVEAU : La vitesse de la balle dépend de la classe
 }
 
 export interface TrackMark {
@@ -182,6 +201,7 @@ export interface Bunker extends Entity {
     storedStone: number;
     storedWood: number;
     storedElectronics?: number;
+    storedWater: number; // NEW: Water Defense System
     // Upgrade System
     level: number; // 1 = Basic, 2 = Drone Port, 3 = Mecha Factory
     upgradeHits: number; // Hits received to validate upgrade
@@ -191,6 +211,23 @@ export interface Bunker extends Entity {
     hasShield: boolean; // Electric shield
     // Turret Construction
     turretBuildStatus: number[]; // Array of 4 integers (0=empty, 1=half, 2=built)
+}
+
+export interface RepairStation extends Entity {
+    ownerId: number;
+    isBuilt: boolean;
+    lastHealTime: number;
+    buildHits: number; // Nombre de tirs reçus pour la construction
+}
+
+// NOUVEAU BATIMENT
+export interface MunitionsFactory extends Entity {
+    ownerId: number;
+    isBuilt: boolean;
+    buildHits: number;
+    lastProductionTime: number;
+    readyAmmoType: WeaponType | null; // Type de munition prêt à être ramassé
+    productionProgress: number; // 0 à 100
 }
 
 export interface Turret extends Entity {
@@ -210,6 +247,7 @@ export interface Drone extends Entity {
     targetId: string | null;
     wobbleOffset: number; // Random offset for oscillation
     spinSpeed: number; // For destabilization effect
+    lastShotTime: number; // Pour la cadence de tir
     isAI?: boolean;
 }
 
@@ -234,7 +272,8 @@ export interface Checkpoint {
 export enum DebrisType {
     STONE = 'STONE',
     WOOD = 'WOOD',
-    ELECTRONICS = 'ELECTRONICS'
+    ELECTRONICS = 'ELECTRONICS',
+    TANK_WRECK = 'TANK_WRECK' // NOUVEAU : Carcasse de tank
 }
 
 export interface Debris {
@@ -243,7 +282,7 @@ export interface Debris {
   y: number;
   size: number;
   rotation: number;
-  health: number; // Crumbles when driven over
+  health: number; // Crumbles when driven over (sauf wreck qui est solide/invincible ?)
   color: string;
   type: DebrisType;
 }
@@ -257,6 +296,7 @@ export interface Tree {
     maxHealth: number;
     growth: number; // 0.0 to 1.0 (size factor)
     isOnFire: boolean;
+    variant: number; // 0: Standard, 1: Pine, 2: Oak
     // Elastic physics
     wobbleX: number;
     wobbleY: number;

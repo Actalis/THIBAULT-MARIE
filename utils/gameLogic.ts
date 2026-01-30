@@ -1,6 +1,6 @@
 
 
-import { Entity, Tank, Vector2, Wall, TerrainZone, TerrainType, Checkpoint, Bunker, Tree, Rock } from '../types';
+import { Entity, Tank, Vector2, Wall, TerrainZone, TerrainType, Checkpoint, Bunker, Tree, Rock, RepairStation, MunitionsFactory } from '../types';
 import { GAME_WIDTH, GAME_HEIGHT, TANK_SIZE, WALL_SIZE, WALL_MAX_HEALTH, TANK_HITBOX_SIZE, BUNKER_SIZE, BUNKER_MAX_HEALTH, TREE_SIZE, TREE_MAX_HEALTH, BORDER_SIZE, ROCK_SIZE_MIN, ROCK_SIZE_MAX, ROCK_MAX_HEALTH } from '../constants';
 import { generateRockShape } from './rockLogic';
 
@@ -30,10 +30,10 @@ export const getSpawnPosition = (playerId: number): Vector2 => {
   // Spawn deep in corners
   const padding = 100; 
   switch (playerId) {
-    case 1: return { x: padding, y: padding };
-    case 2: return { x: GAME_WIDTH - padding, y: GAME_HEIGHT - padding };
-    case 3: return { x: GAME_WIDTH - padding, y: padding };
-    case 4: return { x: padding, y: GAME_HEIGHT - padding };
+    case 1: return { x: padding, y: padding }; // Top Left
+    case 2: return { x: GAME_WIDTH - padding, y: GAME_HEIGHT - padding }; // Bottom Right
+    case 3: return { x: GAME_WIDTH - padding, y: padding }; // Top Right
+    case 4: return { x: padding, y: GAME_HEIGHT - padding }; // Bottom Left
     default: return { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 };
   }
 };
@@ -98,12 +98,38 @@ export const getInitialAngle = (playerId: number): number => {
     return 0; // Tous regardent à droite au départ de la course
 }
 
-export const generateLevel = (activePlayerIds: number[]): { walls: Wall[], zones: TerrainZone[], bunkers: Bunker[], trees: Tree[], rocks: Rock[] } => {
+// Fonction utilitaire pour trouver des emplacements valides autour d'un bâtiment
+const getValidSlots = (bx: number, by: number, bW: number, bH: number, itemSize: number, margin: number) => {
+    const slots = [];
+    
+    // Right (Droite)
+    if (bx + bW + margin + itemSize <= GAME_WIDTH - BORDER_SIZE) {
+        slots.push({x: bx + bW + margin, y: by + bH/2 - itemSize/2});
+    }
+    // Bottom (Bas)
+    if (by + bH + margin + itemSize <= GAME_HEIGHT - BORDER_SIZE) {
+        slots.push({x: bx + bW/2 - itemSize/2, y: by + bH + margin});
+    }
+    // Left (Gauche)
+    if (bx - margin - itemSize >= BORDER_SIZE) {
+        slots.push({x: bx - margin - itemSize, y: by + bH/2 - itemSize/2});
+    }
+    // Top (Haut)
+    if (by - margin - itemSize >= BORDER_SIZE) {
+        slots.push({x: bx + bW/2 - itemSize/2, y: by - margin - itemSize});
+    }
+    
+    return slots;
+}
+
+export const generateLevel = (activePlayerIds: number[]): { walls: Wall[], zones: TerrainZone[], bunkers: Bunker[], trees: Tree[], rocks: Rock[], repairStations: RepairStation[], factories: MunitionsFactory[] } => {
     const walls: Wall[] = [];
     const zones: TerrainZone[] = [];
     const bunkers: Bunker[] = [];
     const trees: Tree[] = [];
     const rocks: Rock[] = [];
+    const repairStations: RepairStation[] = [];
+    const factories: MunitionsFactory[] = [];
     
     // --- BORDURES ---
     walls.push({id: 'b-top', x: 0, y: 0, width: GAME_WIDTH, height: BORDER_SIZE, health: 99999, maxHealth: 99999, color: '#000', isBorder: true, angle: 0, vx: 0, vy: 0});
@@ -129,24 +155,62 @@ export const generateLevel = (activePlayerIds: number[]): { walls: Wall[], zones
     // Eau Centrale
     zones.push({ id: 'z-water-main', x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2, width: 180, height: 180, type: TerrainType.WATER, shape: 'circle' });
 
-    // 2. Bunkers
+    // 2. Bunkers & Repair Stations & Factories
     const isHorde = activePlayerIds.length === 1;
     const idsToSpawn = isHorde ? [1, 2, 3, 4] : activePlayerIds;
     const colors: Record<number, string> = { 1: '#e11d48', 2: '#2563eb', 3: '#16a34a', 4: '#ca8a04' };
     
     idsToSpawn.forEach(pid => {
         const spawn = getSpawnPosition(pid);
+        const bWidth = BUNKER_SIZE;
+        const bHeight = BUNKER_SIZE;
+        const bx = spawn.x - bWidth/2;
+        const by = spawn.y - bHeight/2;
+
         bunkers.push({
             id: `bunker-${pid}`,
             ownerId: isHorde ? activePlayerIds[0] : pid,
-            x: spawn.x - BUNKER_SIZE/2, y: spawn.y - BUNKER_SIZE/2,
-            width: BUNKER_SIZE, height: BUNKER_SIZE,
+            x: bx, y: by,
+            width: bWidth, height: bHeight,
             health: BUNKER_MAX_HEALTH, maxHealth: BUNKER_MAX_HEALTH,
             color: isHorde ? colors[activePlayerIds[0]] : (colors[pid] || '#555'),
             angle: 0, vx: 0, vy: 0,
-            storedStone: 0, storedWood: 0, storedElectronics: 0,
+            storedStone: 0, storedWood: 0, storedElectronics: 0, storedWater: 0,
             level: 1, upgradeHits: 0, lastDroneSpawn: 0, lastMechaSpawn: 0, hasShield: false,
             turretBuildStatus: [0, 0, 0, 0]
+        });
+
+        const stationSize = 50;
+        const margin = 20;
+        
+        // Trouver des emplacements valides pour les annexes
+        const validSlots = getValidSlots(bx, by, bWidth, bHeight, stationSize, margin);
+        
+        // Assignation sécurisée : on prend les 2 premiers slots dispo
+        const rsSlot = validSlots.length > 0 ? validSlots[0] : {x: bx + bWidth + margin, y: by};
+        const facSlot = validSlots.length > 1 ? validSlots[1] : {x: bx - margin - stationSize, y: by};
+
+        // Repair Station
+        repairStations.push({
+            id: `repair-${pid}`,
+            ownerId: isHorde ? activePlayerIds[0] : pid,
+            x: rsSlot.x, y: rsSlot.y,
+            width: stationSize, height: stationSize, 
+            angle: 0, vx: 0, vy: 0,
+            isBuilt: false, lastHealTime: 0, buildHits: 0
+        });
+
+        // Munitions Factory
+        factories.push({
+            id: `factory-${pid}`,
+            ownerId: isHorde ? activePlayerIds[0] : pid,
+            x: facSlot.x, y: facSlot.y,
+            width: stationSize, height: stationSize,
+            angle: 0, vx: 0, vy: 0,
+            isBuilt: false, buildHits: 0,
+            lastProductionTime: 0,
+            readyAmmoType: null,
+            productionProgress: 0
         });
     });
 
@@ -168,48 +232,82 @@ export const generateLevel = (activePlayerIds: number[]): { walls: Wall[], zones
             if (Math.sqrt(Math.pow(wx - GAME_WIDTH/2, 2) + Math.pow(wy - GAME_HEIGHT/2, 2)) < 250) safe = false;
 
             if (safe && !isOccupied(c, r)) {
-                const rand = Math.random();
-                if (rand < 0.15) {
-                    const treeX = wx + WALL_SIZE/2 + (Math.random()-0.5)*20;
-                    const treeY = wy + WALL_SIZE/2 + (Math.random()-0.5)*20;
-                    let overlaps = false;
-                    for(const b of bunkers) { if (treeX > b.x - 20 && treeX < b.x + b.width + 20 && treeY > b.y - 20 && treeY < b.y + b.height + 20) overlaps = true; }
-                    if (!overlaps) {
-                        trees.push({ id: `t-${c}-${r}`, x: treeX, y: treeY, size: TREE_SIZE, health: TREE_MAX_HEALTH, maxHealth: TREE_MAX_HEALTH, growth: 1.0, isOnFire: false, wobbleX: 0, wobbleY: 0, wobbleVelX: 0, wobbleVelY: 0, regrowAt: 0 });
-                        markOccupied(c, r);
+                // VERIFICATION ROUTE
+                const centerX = wx + WALL_SIZE/2;
+                const centerY = wy + WALL_SIZE/2;
+                let onRoad = false;
+                for(const zone of zones) {
+                    if (zone.type === TerrainType.ASPHALT) {
+                        // Check simple AABB
+                        if (centerX > zone.x && centerX < zone.x + zone.width &&
+                            centerY > zone.y && centerY < zone.y + zone.height) {
+                            onRoad = true;
+                            break;
+                        }
                     }
-                } else if (rand < 0.30) {
-                    const rockSize = ROCK_SIZE_MIN + Math.random() * (ROCK_SIZE_MAX - ROCK_SIZE_MIN);
-                    const rockX = wx + WALL_SIZE/2 + (Math.random()-0.5)*10;
-                    const rockY = wy + WALL_SIZE/2 + (Math.random()-0.5)*10;
-                    let overlaps = false;
-                    for(const b of bunkers) { if (rockX > b.x - 40 && rockX < b.x + b.width + 40 && rockY > b.y - 40 && rockY < b.y + b.height + 40) overlaps = true; }
-                    if (!overlaps) {
-                        rocks.push({ id: `rock-${c}-${r}`, x: rockX, y: rockY, width: rockSize, height: rockSize, angle: 0, vx: 0, vy: 0, health: ROCK_MAX_HEALTH, maxHealth: ROCK_MAX_HEALTH, rotation: Math.random() * Math.PI * 2, shapePoints: generateRockShape(rockSize) });
-                        markOccupied(c, r);
+                }
+                
+                if (!onRoad) {
+                    const rand = Math.random();
+                    if (rand < 0.15) {
+                        const treeX = wx + WALL_SIZE/2 + (Math.random()-0.5)*20;
+                        const treeY = wy + WALL_SIZE/2 + (Math.random()-0.5)*20;
+                        let overlaps = false;
+                        for(const b of bunkers) { if (treeX > b.x - 20 && treeX < b.x + b.width + 20 && treeY > b.y - 20 && treeY < b.y + b.height + 20) overlaps = true; }
+                        for(const rs of repairStations) { if (treeX > rs.x - 20 && treeX < rs.x + rs.width + 20 && treeY > rs.y - 20 && treeY < rs.y + rs.height + 20) overlaps = true; }
+                        for(const f of factories) { if (treeX > f.x - 20 && treeX < f.x + f.width + 20 && treeY > f.y - 20 && treeY < f.y + f.height + 20) overlaps = true; }
+                        
+                        if (!overlaps) {
+                            const variant = Math.random() < 0.33 ? 1 : (Math.random() < 0.5 ? 2 : 0);
+                            trees.push({ 
+                                id: `t-${c}-${r}`, 
+                                x: treeX, y: treeY, 
+                                size: TREE_SIZE, 
+                                health: TREE_MAX_HEALTH, maxHealth: TREE_MAX_HEALTH, 
+                                growth: 1.0, 
+                                isOnFire: false, 
+                                wobbleX: 0, wobbleY: 0, wobbleVelX: 0, wobbleVelY: 0, 
+                                regrowAt: 0,
+                                variant: variant
+                            });
+                            markOccupied(c, r);
+                        }
+                    } else if (rand < 0.30) {
+                        const rockSize = ROCK_SIZE_MIN + Math.random() * (ROCK_SIZE_MAX - ROCK_SIZE_MIN);
+                        const rockX = wx + WALL_SIZE/2 + (Math.random()-0.5)*10;
+                        const rockY = wy + WALL_SIZE/2 + (Math.random()-0.5)*10;
+                        let overlaps = false;
+                        for(const b of bunkers) { if (rockX > b.x - 40 && rockX < b.x + b.width + 40 && rockY > b.y - 40 && rockY < b.y + b.height + 40) overlaps = true; }
+                        for(const rs of repairStations) { if (rockX > rs.x - 40 && rockX < rs.x + rs.width + 40 && rockY > rs.y - 40 && rockY < rs.y + rs.height + 40) overlaps = true; }
+                        for(const f of factories) { if (rockX > f.x - 40 && rockX < f.x + f.width + 40 && rockY > f.y - 40 && rockY < f.y + f.height + 40) overlaps = true; }
+                        
+                        if (!overlaps) {
+                            rocks.push({ id: `rock-${c}-${r}`, x: rockX, y: rockY, width: rockSize, height: rockSize, angle: 0, vx: 0, vy: 0, health: ROCK_MAX_HEALTH, maxHealth: ROCK_MAX_HEALTH, rotation: Math.random() * Math.PI * 2, shapePoints: generateRockShape(rockSize) });
+                            markOccupied(c, r);
+                        }
                     }
                 }
             }
         }
     }
-    return { walls, zones, bunkers, trees, rocks };
+    return { walls, zones, bunkers, trees, rocks, repairStations, factories };
 };
 
 export const generateRaceTrack = (): { walls: Wall[], zones: TerrainZone[], checkpoints: Checkpoint[], trees: Tree[], rocks: Rock[] } => {
+    // ... (Reste de la fonction inchangé pour l'instant car pas de bunker en course)
+    // Retour rapide du code existant pour ne pas casser la course
     const walls: Wall[] = [];
     const zones: TerrainZone[] = [];
     const checkpoints: Checkpoint[] = [];
     const trees: Tree[] = [];
     const rocks: Rock[] = [];
     
-    // --- BORDURES ---
+    // Bordures
     walls.push({id: 'b-top', x: 0, y: 0, width: GAME_WIDTH, height: 10, health: 99999, maxHealth: 99999, color: '#333', isBorder: true, angle: 0, vx: 0, vy: 0});
     walls.push({id: 'b-bottom', x: 0, y: GAME_HEIGHT - 10, width: GAME_WIDTH, height: 10, health: 99999, maxHealth: 99999, color: '#333', isBorder: true, angle: 0, vx: 0, vy: 0});
     walls.push({id: 'b-left', x: 0, y: 0, width: 10, height: GAME_HEIGHT, health: 99999, maxHealth: 99999, color: '#333', isBorder: true, angle: 0, vx: 0, vy: 0});
     walls.push({id: 'b-right', x: GAME_WIDTH - 10, y: 0, width: 10, height: GAME_HEIGHT, health: 99999, maxHealth: 99999, color: '#333', isBorder: true, angle: 0, vx: 0, vy: 0});
 
-    // --- 1. DÉCOR DE FOND (Terrain Battle Style) ---
-    // Quelques flaques de boue et sable aléatoires
     const clusterCount = 15;
     for(let i=0; i<clusterCount; i++) {
         let x = Math.random() * GAME_WIDTH;
@@ -218,78 +316,46 @@ export const generateRaceTrack = (): { walls: Wall[], zones: TerrainZone[], chec
         zones.push({ id: `z-bg-${i}`, x: x, y: y, width: 150 + Math.random() * 200, height: 150 + Math.random() * 200, type: type, shape: 'circle' });
     }
     
-    // Un petit lac au centre pour décorer
     zones.push({ id: 'z-lake-race', x: GAME_WIDTH/2, y: GAME_HEIGHT/2, width: 150, height: 150, type: TerrainType.WATER, shape: 'circle' });
 
-    // --- 2. CIRCUIT (Asphalte) ---
-    const trackWidth = 220; // Large pour doubler
-    
-    // Points définissant le circuit (Boucle)
+    const trackWidth = 220; 
     const points = [
-        {x: 200, y: 200},   // 0. Départ (Haut Gauche)
-        {x: 900, y: 150},   // 1. Ligne droite haut
-        {x: 1700, y: 200},  // 2. Coin Haut Droit
-        {x: 1700, y: 600},  // 3. Descente Droite
-        {x: 1300, y: 600},  // 4. Intérieur
-        {x: 1300, y: 850},  // 5. Chicane bas
-        {x: 1700, y: 850},  // 6. Extérieur bas
-        {x: 1700, y: 950},  // 7. Coin Bas Droit
-        {x: 200, y: 950},   // 8. Longue ligne droite bas
-        {x: 200, y: 550}    // 9. Remontée vers départ
+        {x: 200, y: 200}, {x: 900, y: 150}, {x: 1700, y: 200}, {x: 1700, y: 600}, 
+        {x: 1300, y: 600}, {x: 1300, y: 850}, {x: 1700, y: 850}, {x: 1700, y: 950}, 
+        {x: 200, y: 950}, {x: 200, y: 550}
     ];
 
-    // Génération des segments de route
     for (let i = 0; i < points.length; i++) {
         const p1 = points[i];
         const p2 = points[(i + 1) % points.length];
-        
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
+        const dx = p2.x - p1.x; const dy = p2.y - p1.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        const steps = Math.ceil(dist / 50); // Tous les 50px
+        const steps = Math.ceil(dist / 50); 
         
         for (let j = 0; j <= steps; j++) {
             const t = j / steps;
             const tx = p1.x + dx * t;
             const ty = p1.y + dy * t;
-            
             zones.push({
-                id: `track-${i}-${j}`,
-                x: tx - trackWidth/2,
-                y: ty - trackWidth/2,
-                width: trackWidth,
-                height: trackWidth,
-                type: TerrainType.ASPHALT,
-                shape: 'rect'
+                id: `track-${i}-${j}`, x: tx - trackWidth/2, y: ty - trackWidth/2, width: trackWidth, height: trackWidth,
+                type: TerrainType.ASPHALT, shape: 'rect'
             });
         }
     }
 
-    // --- 3. CHECKPOINTS ---
-    // Doivent être traversés pour valider le tour
-    // On les place perpendiculairement à la piste
     const cpSize = trackWidth + 20; 
-    
-    // 0: Après départ
     checkpoints.push({id: 0, x: 500, y: 150, width: 20, height: cpSize}); 
-    // 1: Droite
     checkpoints.push({id: 1, x: 1700 - cpSize/2, y: 400, width: cpSize, height: 20});
-    // 2: Milieu
     checkpoints.push({id: 2, x: 1300 - cpSize/2, y: 725, width: cpSize, height: 20});
-    // 3: Ligne droite bas
     checkpoints.push({id: 3, x: 900, y: 950 - cpSize/2, width: 20, height: cpSize});
-    // 4: Remontée
     checkpoints.push({id: 4, x: 200 - cpSize/2, y: 750, width: cpSize, height: 20});
-    // 5: LIGNE D'ARRIVÉE (Sur le départ)
     checkpoints.push({id: 5, x: 200 - 10, y: 200 - cpSize/2, width: 20, height: cpSize});
 
-    // --- 4. OBSTACLES (Arbres & Rochers) ---
-    // Génération dense mais qui respecte la piste
+    // Dummy generation trees/rocks for race
     const grid = 60;
     const cols = Math.ceil(GAME_WIDTH / grid);
     const rows = Math.ceil(GAME_HEIGHT / grid);
     
-    // Fonction distance point à segment pour exclure la piste
     const distToSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
         const l2 = (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
         if (l2 === 0) return Math.sqrt((px-x1)*(px-x1) + (py-y1)*(py-y1));
@@ -301,7 +367,7 @@ export const generateRaceTrack = (): { walls: Wall[], zones: TerrainZone[], chec
     };
 
     const isSafeFromTrack = (x: number, y: number) => {
-        const safetyMargin = trackWidth/2 + 40; // Marge de sécurité
+        const safetyMargin = trackWidth/2 + 40; 
         for (let i = 0; i < points.length; i++) {
             const p1 = points[i];
             const p2 = points[(i + 1) % points.length];
@@ -318,27 +384,16 @@ export const generateRaceTrack = (): { walls: Wall[], zones: TerrainZone[], chec
             if (isSafeFromTrack(x, y)) {
                 const rand = Math.random();
                 if (rand < 0.25) {
-                    // ARBRE (avec variation taille pour sapins)
                     const isSapling = Math.random() < 0.4;
+                    const variant = Math.random() < 0.33 ? 1 : (Math.random() < 0.5 ? 2 : 0);
                     trees.push({
-                        id: `rt-${c}-${r}`,
-                        x, y,
-                        size: TREE_SIZE,
-                        health: TREE_MAX_HEALTH, maxHealth: TREE_MAX_HEALTH,
-                        growth: isSapling ? 0.3 : 1.0,
-                        isOnFire: false, wobbleX: 0, wobbleY: 0, wobbleVelX: 0, wobbleVelY: 0, regrowAt: 0
+                        id: `rt-${c}-${r}`, x, y, size: TREE_SIZE, health: TREE_MAX_HEALTH, maxHealth: TREE_MAX_HEALTH,
+                        growth: isSapling ? 0.3 : 1.0, isOnFire: false, wobbleX: 0, wobbleY: 0, wobbleVelX: 0, wobbleVelY: 0, regrowAt: 0, variant
                     });
                 } else if (rand < 0.40) {
-                    // ROCHER
                     const s = ROCK_SIZE_MIN + Math.random()*(ROCK_SIZE_MAX-ROCK_SIZE_MIN);
                     rocks.push({
-                        id: `rr-${c}-${r}`,
-                        x, y,
-                        width: s, height: s,
-                        angle: 0, vx: 0, vy: 0,
-                        health: ROCK_MAX_HEALTH, maxHealth: ROCK_MAX_HEALTH,
-                        rotation: Math.random()*6,
-                        shapePoints: generateRockShape(s)
+                        id: `rr-${c}-${r}`, x, y, width: s, height: s, angle: 0, vx: 0, vy: 0, health: ROCK_MAX_HEALTH, maxHealth: ROCK_MAX_HEALTH, rotation: Math.random()*6, shapePoints: generateRockShape(s)
                     });
                 }
             }

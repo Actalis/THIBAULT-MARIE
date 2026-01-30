@@ -1,5 +1,6 @@
 
-import { Rock, Tank, Bullet, Particle } from '../types';
+
+import { Rock, Tank, Bullet, Particle, Tree } from '../types';
 import { ROCK_PUSH_FRICTION, TANK_SIZE, ROCK_MAX_HEALTH } from '../constants';
 import { checkCollision } from './gameLogic';
 import { AudioSystem } from './audio';
@@ -90,6 +91,57 @@ export const updateRockPhysics = (rock: Rock, dt: number) => {
     if (Math.abs(rock.vy) < 0.05) rock.vy = 0;
 };
 
+export const resolveRockTreeCollisions = (rocks: Rock[], trees: Tree[]) => {
+    rocks.forEach(rock => {
+        if (rock.health <= 0) return;
+
+        trees.forEach(tree => {
+            if (tree.health <= 0) return;
+
+            const dx = rock.x - tree.x;
+            const dy = rock.y - tree.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // Rayon physique approximatif
+            const rockRadius = rock.width / 2;
+            const treeTrunkRadius = 20; // Correspond à la hitbox du tronc dans treeLogic
+            
+            const minDist = rockRadius + treeTrunkRadius;
+
+            if (dist < minDist) {
+                // Collision détectée
+                const angle = Math.atan2(dy, dx);
+                const pushX = Math.cos(angle);
+                const pushY = Math.sin(angle);
+                
+                const overlap = minDist - dist;
+
+                // 1. Repousser le rocher (L'arbre est statique)
+                rock.x += pushX * overlap;
+                rock.y += pushY * overlap;
+
+                // 2. Rebond physique (Elasticité faible)
+                // On inverse la vitesse sur l'axe de collision avec amortissement
+                const vDotNormal = rock.vx * pushX + rock.vy * pushY;
+                if (vDotNormal < 0) { // Si le rocher va vers l'arbre
+                    const restitution = 0.4; // Rebond mou
+                    
+                    // V_new = V - (1+e)*(V.N)*N
+                    rock.vx -= (1 + restitution) * vDotNormal * pushX;
+                    rock.vy -= (1 + restitution) * vDotNormal * pushY;
+                    
+                    // Transfert d'énergie à l'arbre (Wobble)
+                    const impactSpeed = Math.abs(vDotNormal);
+                    if (impactSpeed > 0.5) {
+                        tree.wobbleVelX += pushX * impactSpeed * 0.5;
+                        tree.wobbleVelY += pushY * impactSpeed * 0.5;
+                    }
+                }
+            }
+        });
+    });
+};
+
 export const resolveRockCollisions = (
     tanks: Tank[],
     rocks: Rock[],
@@ -111,7 +163,8 @@ export const resolveRockCollisions = (
             
             // Le rocher rétrécit visuellement mais garde sa "masse" un peu
             const currentRockRadius = (rock.width / 2) * (0.6 + 0.4 * (rock.health/rock.maxHealth));
-            const minDist = (TANK_SIZE/2) + currentRockRadius;
+            const hitboxTank = tank.isSoldier ? (TANK_SIZE/2 - 10) : TANK_SIZE/2;
+            const minDist = hitboxTank + currentRockRadius;
 
             if (dist < minDist) {
                 // Collision !
@@ -121,23 +174,36 @@ export const resolveRockCollisions = (
                 
                 const overlap = minDist - dist;
 
-                // Le tank est repoussé (ne peut pas traverser)
+                // Le joueur est TOUJOURS repoussé (ne peut pas traverser)
                 tank.x += pushX * overlap * 0.5;
                 tank.y += pushY * overlap * 0.5;
                 
-                // Transfert d'énergie : Le tank pousse le rocher
-                // Si le tank avançait vers le rocher
-                const tankSpeed = Math.sqrt(tank.vx*tank.vx + tank.vy*tank.vy);
-                if (tankSpeed > 0.1) {
-                    // Pousser le rocher (Lentement)
-                    rock.vx -= pushX * 0.5; 
-                    rock.vy -= pushY * 0.5;
+                // Transfert d'énergie :
+                if (tank.isSoldier) {
+                    // --- CAS SOLDAT ---
+                    // Le soldat rebondit MAIS NE POUSSE PAS le rocher.
+                    // On ne touche pas à rock.vx / rock.vy
                     
-                    // Ralentir énormément le tank (Effort)
-                    tank.vx *= 0.2;
-                    tank.vy *= 0.2;
+                    // Rebond sec du soldat
+                    tank.vx -= pushX * 3.0;
+                    tank.vy -= pushY * 3.0;
                     
-                    // Bruit de frottement pierre (Optionnel, ou réutiliser bushImpact bas pitch)
+                    // Amortissement vitesse soldat
+                    tank.vx *= 0.5;
+                    tank.vy *= 0.5;
+                } else {
+                    // --- CAS TANK ---
+                    // Le tank pousse le rocher
+                    const tankSpeed = Math.sqrt(tank.vx*tank.vx + tank.vy*tank.vy);
+                    if (tankSpeed > 0.1) {
+                        // Pousser le rocher (Lentement)
+                        rock.vx -= pushX * 0.5; 
+                        rock.vy -= pushY * 0.5;
+                        
+                        // Ralentir énormément le tank (Effort)
+                        tank.vx *= 0.2;
+                        tank.vy *= 0.2;
+                    }
                 }
             }
         });

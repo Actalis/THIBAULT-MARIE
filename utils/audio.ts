@@ -153,34 +153,54 @@ export const AudioSystem = {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(150, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.5);
+        osc.frequency.setValueAtTime(100, ctx.currentTime); // Lower pitch
+        osc.frequency.exponentialRampToValueAtTime(10, ctx.currentTime + 1.5);
         
-        gain.gain.setValueAtTime(1.0, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5); // Long tail
+        gain.gain.setValueAtTime(2.0, ctx.currentTime); // LOUDER
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 3.0); // Longer tail
 
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 1.5);
+        osc.stop(ctx.currentTime + 3.0);
 
-        // Noise Burst impact
-        const bSize = ctx.sampleRate * 0.2;
+        // Noise Burst impact (High freq snap)
+        const bSize = ctx.sampleRate * 0.5;
         const b = ctx.createBuffer(1, bSize, ctx.sampleRate);
         const d = b.getChannelData(0);
         for(let i=0; i<bSize; i++) d[i] = Math.random() * 2 - 1;
         const n = ctx.createBufferSource();
         n.buffer = b;
         const ng = ctx.createGain();
-        ng.gain.setValueAtTime(0.5, ctx.currentTime);
-        ng.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
-        const nf = ctx.createBiquadFilter();
-        nf.type = 'lowpass';
-        nf.frequency.value = 800;
-        n.connect(nf);
-        nf.connect(ng);
+        ng.gain.setValueAtTime(0.8, ctx.currentTime);
+        ng.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        
+        n.connect(ng);
         ng.connect(ctx.destination);
         n.start();
+    },
+
+    waterDrop: () => {
+        const ctx = getContext();
+        if (ctx.state === 'suspended') ctx.resume();
+        
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = 'sine';
+        // Son grave qui descend (Bloop profond)
+        osc.frequency.setValueAtTime(350, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.3);
+        
+        gain.gain.setValueAtTime(0, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 0.02); // Attaque douce
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(ctx.currentTime + 0.4);
     },
 
     cinematicBrass: (pitch: number = 200) => {
@@ -469,23 +489,43 @@ export const AudioSystem = {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         
-        // Simple major arpeggio
         const now = ctx.currentTime;
-        osc.type = 'triangle';
         
-        osc.frequency.setValueAtTime(523.25, now); // C5
-        osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
-        osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
-        osc.frequency.setValueAtTime(1046.50, now + 0.3); // C6
+        // Epic Bass Drop
+        const bassOsc = ctx.createOscillator();
+        const bassGain = ctx.createGain();
+        bassOsc.type = 'triangle';
+        bassOsc.frequency.setValueAtTime(100, now);
+        bassOsc.frequency.exponentialRampToValueAtTime(30, now + 2);
+        bassGain.gain.setValueAtTime(0.8, now);
+        bassGain.gain.exponentialRampToValueAtTime(0.01, now + 3);
+        bassOsc.connect(bassGain);
+        bassGain.connect(ctx.destination);
+        bassOsc.start();
+        bassOsc.stop(now + 3);
+
+        // Major chord build-up (Cinematic)
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(261.63, now); // C4
+        osc.frequency.setValueAtTime(329.63, now + 0.5); // E4
+        osc.frequency.setValueAtTime(392.00, now + 1.0); // G4
+        osc.frequency.setValueAtTime(523.25, now + 1.5); // C5
         
-        gain.gain.setValueAtTime(0.2, now);
-        gain.gain.linearRampToValueAtTime(0.2, now + 0.4);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+        // Lowpass filter swell
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(200, now);
+        filter.frequency.linearRampToValueAtTime(2000, now + 2);
+
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.3, now + 2);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 6);
         
-        osc.connect(gain);
+        osc.connect(filter);
+        filter.connect(gain);
         gain.connect(ctx.destination);
         
         osc.start();
-        osc.stop(now + 1.5);
+        osc.stop(now + 6);
     }
 };

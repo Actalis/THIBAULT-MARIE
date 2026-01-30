@@ -1,7 +1,8 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { GameHistory, PlayerProfile, PlayerConfig, GameMode, PlayerControls } from '../types';
-import { Play, History, Keyboard, Save, Film, Edit2, Shield, AlertTriangle, UserPlus, BarChart2, Check, X, Flag } from 'lucide-react';
+import { GameHistory, PlayerProfile, PlayerConfig, GameMode, PlayerControls, TankClass } from '../types';
+import { Play, History, Keyboard, Save, Film, Edit2, Shield, AlertTriangle, UserPlus, BarChart2, Check, X, Flag, Crosshair, Zap, Anchor } from 'lucide-react';
 import { AudioSystem } from '../utils/audio';
 import { DEFAULT_CONTROLS, COLORS } from '../constants';
 
@@ -25,6 +26,9 @@ const Menu: React.FC<MenuProps> = ({
   const [showProfileStats, setShowProfileStats] = useState<string | null>(null);
   
   const [selectedProfiles, setSelectedProfiles] = useState<(string | null)[]>([null, null, null, null]);
+  // NOUVEAU : Stockage des classes sélectionnées
+  const [selectedClasses, setSelectedClasses] = useState<TankClass[]>([TankClass.ASSAULT, TankClass.ASSAULT, TankClass.ASSAULT, TankClass.ASSAULT]);
+  
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileColor, setNewProfileColor] = useState(COLORS.p1);
@@ -98,6 +102,13 @@ const Menu: React.FC<MenuProps> = ({
       localStorage.setItem('lastSquadSelection', JSON.stringify(newSelection));
   };
 
+  const handleClassSelect = (slotIndex: number, cls: TankClass) => {
+      AudioSystem.uiClick();
+      const newClasses = [...selectedClasses];
+      newClasses[slotIndex] = cls;
+      setSelectedClasses(newClasses);
+  };
+
   const handleCreateSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if (newProfileName.trim().length > 0) {
@@ -133,6 +144,7 @@ const Menu: React.FC<MenuProps> = ({
                     profileId: profile.id,
                     name: profile.name,
                     color: profile.color,
+                    tankClass: selectedClasses[i], // CLASS ASSIGNMENT
                     controls: controls,
                     active: true
                 };
@@ -170,6 +182,7 @@ const Menu: React.FC<MenuProps> = ({
                 id: i + 1,
                 name: `Joueur ${i + 1}`,
                 color: DEFAULT_CONTROLS[i].color,
+                tankClass: selectedClasses[i], // CLASS ASSIGNMENT
                 controls: assignedControls,
                 active: true
             };
@@ -328,30 +341,51 @@ const Menu: React.FC<MenuProps> = ({
 
                 <div className="space-y-4">
                     {Array.from({length: playerCount}).map((_, i) => (
-                        <div key={i} className="flex items-center gap-3 bg-black/30 p-2 rounded border border-neutral-800">
-                            <div className="w-8 h-8 rounded flex items-center justify-center font-bold text-neutral-500 text-xs bg-neutral-900">
-                                P{i+1}
+                        <div key={i} className="flex flex-col gap-2 p-2 bg-black/30 rounded border border-neutral-800">
+                            {/* Ligne 1 : Profil */}
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded flex items-center justify-center font-bold text-neutral-500 text-xs bg-neutral-900">
+                                    P{i+1}
+                                </div>
+                                <div className="flex-1">
+                                    <select 
+                                        className="w-full bg-stone-200 text-black font-bold focus:outline-none cursor-pointer p-1 rounded border border-stone-400"
+                                        value={selectedProfiles[i] || ''}
+                                        onChange={(e) => handleProfileSelect(i, e.target.value)}
+                                    >
+                                        <option value="" disabled className="text-stone-500">Sélectionner un profil</option>
+                                        {getSortedProfiles(i).map(p => (
+                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {selectedProfiles[i] && (
+                                    <button onClick={() => setShowProfileStats(selectedProfiles[i])} className="text-stone-500 hover:text-amber-500 transition-colors">
+                                        <BarChart2 size={16} />
+                                    </button>
+                                )}
+                                {selectedProfiles[i] && (
+                                    <div className="w-4 h-4 rounded-full shadow" style={{backgroundColor: profiles.find(p => p.id === selectedProfiles[i])?.color || '#555'}}></div>
+                                )}
                             </div>
-                            <div className="flex-1">
-                                <select 
-                                    className="w-full bg-stone-200 text-black font-bold focus:outline-none cursor-pointer p-1 rounded border border-stone-400"
-                                    value={selectedProfiles[i] || ''}
-                                    onChange={(e) => handleProfileSelect(i, e.target.value)}
-                                >
-                                    <option value="" disabled className="text-stone-500">Sélectionner un profil</option>
-                                    {getSortedProfiles(i).map(p => (
-                                        <option key={p.id} value={p.id}>{p.name}</option>
-                                    ))}
-                                </select>
+                            
+                            {/* Ligne 2 : Classe */}
+                            <div className="flex gap-1 ml-11">
+                                {[TankClass.ASSAULT, TankClass.SNIPER, TankClass.HEAVY, TankClass.SCOUT].map((cls) => (
+                                    <button 
+                                        key={cls}
+                                        onClick={() => handleClassSelect(i, cls)}
+                                        className={`flex-1 text-[10px] font-bold py-1 px-1 rounded flex items-center justify-center gap-1 transition-all ${selectedClasses[i] === cls ? 'bg-amber-600 text-white shadow' : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700'}`}
+                                        title={cls}
+                                    >
+                                        {cls === TankClass.ASSAULT && <Shield size={10} />}
+                                        {cls === TankClass.SNIPER && <Crosshair size={10} />}
+                                        {cls === TankClass.HEAVY && <Anchor size={10} />}
+                                        {cls === TankClass.SCOUT && <Zap size={10} />}
+                                        <span className="hidden xl:inline">{cls.substring(0,3)}</span>
+                                    </button>
+                                ))}
                             </div>
-                            {selectedProfiles[i] && (
-                                <button onClick={() => setShowProfileStats(selectedProfiles[i])} className="text-stone-500 hover:text-amber-500 transition-colors">
-                                    <BarChart2 size={16} />
-                                </button>
-                            )}
-                            {selectedProfiles[i] && (
-                                <div className="w-4 h-4 rounded-full shadow" style={{backgroundColor: profiles.find(p => p.id === selectedProfiles[i])?.color || '#555'}}></div>
-                            )}
                         </div>
                     ))}
                 </div>

@@ -10,13 +10,14 @@ import {
     BULLET_SPEED, TANK_SIZE, BULLET_SIZE, COOLDOWN_FRAMES, 
     TRACK_SPACING, COLORS, MAX_TRACKS, TRACK_FADE_DURATION,
     TANK_BASE_HEALTH, TERRAIN_MODIFIERS,
-    WALL_MAX_HEALTH, DEBRIS_MAX_HEALTH, XP_PER_DISTANCE, LAPS_TO_WIN, RACE_REPLAY_SECONDS
+    WALL_MAX_HEALTH, DEBRIS_MAX_HEALTH, XP_PER_DISTANCE, LAPS_TO_WIN, RACE_REPLAY_SECONDS,
+    TREE_SOLID_THRESHOLD
 } from '../constants';
 import { checkCollision, getRaceSpawnPosition, generateRaceTrack } from '../utils/gameLogic';
 import { AudioSystem } from '../utils/audio';
 import { drawTank, drawWreck, drawGroundTexture, drawZone } from '../utils/tankUtils';
 import { drawTreeFoliage, updateTreePhysics, resolveTreeCollisions, resolveDebrisCollection } from '../utils/treeLogic'; 
-import { drawRock, updateRockPhysics, resolveRockCollisions } from '../utils/rockLogic'; 
+import { drawRock, updateRockPhysics, resolveRockCollisions, resolveRockTreeCollisions } from '../utils/rockLogic'; 
 import { drawWater, updateWaterPhysics, resolveWaterInteraction } from '../utils/waterLogic';
 
 interface RaceCanvasProps {
@@ -104,7 +105,7 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
                 stoneCount: 0, woodCount: 0, waterCount: 0, electronicsCount: 0,
                 lastHealTime: 0, lastWaterCollectTime: 0,
                 muddyTreadsTimer: 0, isSoldier: false, stunnedUntil: 0,
-                attachedBranches: 0, lastImpactTime: 0
+                attachedBranches: 0, lastImpactTime: 0, isInWater: false
             };
         });
 
@@ -179,6 +180,10 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
         // Collisions Globales
         resolveTreeCollisions(tanksRef.current, bulletsRef.current, treesRef.current, particlesRef.current, now);
         resolveRockCollisions(tanksRef.current, rocksRef.current, bulletsRef.current, particlesRef.current, now);
+        
+        // NOUVEAU : Collisions Pierres vs Arbres
+        resolveRockTreeCollisions(rocksRef.current, treesRef.current);
+        
         resolveDebrisCollection(tanksRef.current, particlesRef.current);
 
         // Mise à jour Tanks
@@ -243,7 +248,7 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
                     if (tank.x >= zone.x && tank.x <= zone.x + zone.width && tank.y >= zone.y && tank.y <= zone.y + zone.height) {
                         currentTerrain = zone.type;
                     }
-                } else if (zone.shape === 'circle') {
+                } else if (zone.shape === 'circle') { // Circle or Blob aproximation check
                     const dx = tank.x - zone.x; const dy = tank.y - zone.y;
                     if (dx*dx + dy*dy < zone.width * zone.width) currentTerrain = zone.type;
                 }
@@ -287,17 +292,42 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
             // Audio Moteur
             AudioSystem.updateEngine(tank.id, tank.isMoving ? finalSpeed : 0, TANK_SPEED * 1.5, currentTerrain);
 
-            // Traces
-            if (tank.isMoving) {
-                tank.distanceTraveled += Math.abs(finalSpeed);
-                if (tank.distanceTraveled > TRACK_SPACING) {
-                    const c = currentTerrain === TerrainType.MUD ? '#3f2e00' : '#222';
-                    tracksRef.current.push({
-                        id: `t-${trackIdCounter.current++}`, x: tank.x, y: tank.y, angle: tank.angle, 
-                        color: c, createdAt: now, opacity: 0.6
-                    });
-                    tank.distanceTraveled = 0;
-                    if(tracksRef.current.length > MAX_TRACKS) tracksRef.current.shift();
+            // Gestion de l'eau (Pour ne pas mettre de traces)
+            let inWater = false;
+            zonesRef.current.forEach(zone => {
+                 const dx = tank.x - zone.x; const dy = tank.y - zone.y;
+                 if (zone.type === TerrainType.WATER && dx*dx+dy*dy < zone.width*zone.width) inWater = true;
+            });
+
+            // Traces (Double Chenilles Persistantes)
+            if (tank.isMoving && !inWater && tank.distanceTraveled > TRACK_SPACING) {
+                // Ecartement 24px pour réalisme
+                const offset = 24; 
+                
+                const leftX = tank.x + Math.cos(tank.angle - Math.PI/2) * offset;
+                const leftY = tank.y + Math.sin(tank.angle - Math.PI/2) * offset;
+                
+                const rightX = tank.x + Math.cos(tank.angle + Math.PI/2) * offset;
+                const rightY = tank.y + Math.sin(tank.angle + Math.PI/2) * offset;
+
+                const trackColor = tank.color; 
+
+                tracksRef.current.push({
+                    id: `tr-l-${trackIdCounter.current++}`,
+                    x: leftX, y: leftY, angle: tank.angle,
+                    color: trackColor, createdAt: now, opacity: 1.0
+                });
+                
+                tracksRef.current.push({
+                    id: `tr-r-${trackIdCounter.current++}`,
+                    x: rightX, y: rightY, angle: tank.angle,
+                    color: trackColor, createdAt: now, opacity: 1.0
+                });
+
+                tank.distanceTraveled = 0;
+                
+                if (tracksRef.current.length > MAX_TRACKS) {
+                    tracksRef.current.splice(0, 2);
                 }
             }
 
@@ -306,16 +336,20 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
             if (shoot && tank.cooldown <= 0) {
                 AudioSystem.shoot();
                 const barrelLen = TANK_SIZE/2 + 18;
+                const startX = tank.x + Math.cos(tank.angle) * barrelLen;
+                const startY = tank.y + Math.sin(tank.angle) * barrelLen;
                 bulletsRef.current.push({
                     id: `b-${now}-${tank.playerId}-${Math.random()}`,
                     ownerId: tank.playerId,
-                    x: tank.x + Math.cos(tank.angle) * barrelLen,
-                    y: tank.y + Math.sin(tank.angle) * barrelLen,
+                    x: startX,
+                    y: startY,
                     vx: Math.cos(tank.angle) * BULLET_SPEED,
                     vy: Math.sin(tank.angle) * BULLET_SPEED,
                     width: BULLET_SIZE, height: BULLET_SIZE,
                     damage: 1, angle: tank.angle, type: WeaponType.NORMAL, bouncesLeft: 0,
-                    isElectrified: false, homingTargetId: null
+                    isElectrified: false, homingTargetId: null,
+                    startX: startX,
+                    startY: startY
                 });
                 tank.cooldown = COOLDOWN_FRAMES;
                 tank.recoilX -= Math.cos(tank.angle)*3; tank.recoilY -= Math.sin(tank.angle)*3;
@@ -394,14 +428,6 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
         // Background
         drawGroundTexture(ctx);
 
-        // Camera: Zoom out to fit whole track (Simple & Stable)
-        // Map 1920x1080 -> Fit in Window
-        // Ici on garde 1:1 car le canvas est déjà ajusté par CSS "w-full h-auto"
-        // Mais on applique un léger zoom out pour voir les bords si besoin
-        // ctx.translate(GAME_WIDTH/2, GAME_HEIGHT/2);
-        // ctx.scale(0.9, 0.9);
-        // ctx.translate(-GAME_WIDTH/2, -GAME_HEIGHT/2);
-
         // Zones (Asphalt, Water, Mud)
         zonesRef.current.forEach(z => {
             if (z.type === TerrainType.WATER) drawWater(ctx, z, now);
@@ -427,9 +453,23 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
 
         // Traces
         tracksRef.current.forEach(t => {
-            ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.angle + Math.PI/2);
-            ctx.fillStyle = t.color; ctx.globalAlpha = t.opacity;
-            ctx.fillRect(-4, -4, 8, 8);
+            const age = now - t.createdAt;
+            let opacity = 1;
+            const MAX_OPACITY = 0.35; // Start subtle
+            const MIN_OPACITY = 0.05; // Faded persistency
+            
+            if (age < TRACK_FADE_DURATION) {
+                opacity = MAX_OPACITY - (age / TRACK_FADE_DURATION) * (MAX_OPACITY - MIN_OPACITY);
+            } else {
+                opacity = MIN_OPACITY;
+            }
+
+            ctx.save(); 
+            ctx.translate(t.x, t.y); 
+            ctx.rotate(t.angle);
+            ctx.fillStyle = t.color; 
+            ctx.globalAlpha = opacity;
+            ctx.fillRect(-6, -4, 12, 8);
             ctx.restore();
         });
 
@@ -439,14 +479,21 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
             ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size/2, 0, Math.PI*2); ctx.fill();
         });
 
+        // COUCHE 1 : PETITS ARBRES (Dessinés AVANT les tanks)
+        treesRef.current.forEach(t => {
+            if (t.growth < TREE_SOLID_THRESHOLD) drawTreeFoliage(ctx, t, now);
+        });
+
         // Tanks
         tanksRef.current.forEach(t => {
             if (t.health > 0) drawTank(ctx, t, false, now);
             else drawWreck(ctx, t, now, false);
         });
 
-        // Arbres (Au dessus des tanks)
-        treesRef.current.forEach(t => drawTreeFoliage(ctx, t, now));
+        // COUCHE 3 : GRANDS ARBRES (Dessinés APRÈS les tanks)
+        treesRef.current.forEach(t => {
+            if (t.growth >= TREE_SOLID_THRESHOLD) drawTreeFoliage(ctx, t, now);
+        });
 
         // Balles
         bulletsRef.current.forEach(b => {
@@ -478,9 +525,6 @@ const RaceCanvas: React.FC<RaceCanvasProps> = ({
             ctx.fillStyle = '#fff';
             ctx.fillText("GO !", GAME_WIDTH/2, GAME_HEIGHT/2);
         }
-
-        // Infos Course (Tours) en haut à gauche
-        // On ne dessine pas directement l'UI React ici pour perf, mais on peut faire simple
     };
 
     return (

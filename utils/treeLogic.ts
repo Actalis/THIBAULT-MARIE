@@ -11,6 +11,14 @@ const FOLIAGE_BASE = '#1e5428'; // Vert Sombre
 const FOLIAGE_MID = '#2e7d32'; 
 const FOLIAGE_LIGHT = '#4caf50';
 
+const PINE_BASE = '#064e3b'; // Emerald 900
+const PINE_MID = '#065f46'; // Emerald 800
+const PINE_LIGHT = '#10b981'; // Emerald 500
+
+const OAK_BASE = '#3f6212'; // Lime 900
+const OAK_MID = '#4d7c0f'; // Lime 700
+const OAK_LIGHT = '#84cc16'; // Lime 500
+
 // --- MISE A JOUR PHYSIQUE & LOGIQUE (Cycle de vie) ---
 export const updateTreePhysics = (tree: Tree, dt: number, now: number) => {
     // 1. PHYSIQUE ELASTIQUE DOUCE (Slow Sway)
@@ -55,11 +63,6 @@ export const updateTreePhysics = (tree: Tree, dt: number, now: number) => {
     }
 };
 
-// --- DESSIN PARTIE 1 : TRONC ---
-export const drawTreeTrunk = (ctx: CanvasRenderingContext2D, tree: Tree, now: number) => {
-    return;
-};
-
 // --- DESSIN PARTIE 2 : FEUILLAGE (Dessus le tank) ---
 export const drawTreeFoliage = (ctx: CanvasRenderingContext2D, tree: Tree, now: number) => {
     if (!tree || tree.health <= 0) return;
@@ -67,39 +70,91 @@ export const drawTreeFoliage = (ctx: CanvasRenderingContext2D, tree: Tree, now: 
     ctx.save();
     ctx.translate(tree.x, tree.y);
     
+    // Scale de croissance
     const scale = tree.growth || 1;
     ctx.scale(scale, scale);
 
-    // Application de l'élasticité (Wobble) - Translation pure
+    // 1. TRONC (Fixe, ancré au sol, ne bouge pas avec le vent/impact)
+    ctx.fillStyle = TRUNK_COLOR;
+    ctx.beginPath();
+    ctx.rect(-4, -2, 8, 8); // Petit tronc visible
+    ctx.fill();
+
+    // 2. FEUILLAGE (Bouge avec le wobble physique)
+    ctx.save();
     ctx.translate(tree.wobbleX, tree.wobbleY); 
 
-    // Balancement naturel (vent) léger si pas de wobble fort
-    if (Math.abs(tree.wobbleX) < 1) {
-        const wind = Math.sin(now / 2000 + tree.x * 0.01) * 1.5; // Plus lent
-        ctx.translate(wind, 0);
+    // OMBRE GLOBALE
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 5;
+
+    if (tree.variant === 1) {
+        // --- 1. SAPIN : Simple Triangle ---
+        const color = tree.isOnFire ? '#b45309' : PINE_BASE;
+        ctx.fillStyle = color;
+        
+        ctx.beginPath();
+        const w = tree.size * 0.7; // Largeur base
+        const h = tree.size * 1.4; // Hauteur
+        ctx.moveTo(0, -h); // Pointe
+        ctx.lineTo(w, 0);  // Bas Droite
+        ctx.lineTo(-w, 0); // Bas Gauche
+        ctx.closePath();
+        ctx.fill();
+
+        // Petit reflet
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.beginPath();
+        ctx.moveTo(0, -h + 5);
+        ctx.lineTo(5, -5);
+        ctx.lineTo(0, -5);
+        ctx.fill();
+
+    } else if (tree.variant === 2) {
+        // --- 2. ROND AVEC COEUR : Cercle + Petit Cercle ---
+        const base = tree.isOnFire ? '#b45309' : OAK_BASE;
+        const inner = tree.isOnFire ? '#fbbf24' : OAK_MID;
+
+        // Grand Cercle
+        ctx.fillStyle = base;
+        ctx.beginPath();
+        ctx.arc(0, -10, tree.size * 0.6, 0, Math.PI*2);
+        ctx.fill();
+
+        // Petit Cercle Intérieur
+        ctx.fillStyle = inner;
+        ctx.beginPath();
+        ctx.arc(0, -10, tree.size * 0.3, 0, Math.PI*2);
+        ctx.fill();
+
+    } else {
+        // --- 3. STANDARD (Ecrasé) : Ovale ---
+        const color = tree.isOnFire ? '#b45309' : FOLIAGE_BASE;
+        ctx.fillStyle = color;
+        
+        ctx.beginPath();
+        // Ellipse simple
+        ctx.ellipse(0, -8, tree.size * 0.7, tree.size * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Highlight léger sur le dessus
+        ctx.fillStyle = tree.isOnFire ? '#fbbf24' : FOLIAGE_LIGHT;
+        ctx.beginPath();
+        ctx.ellipse(0, -12, tree.size * 0.4, tree.size * 0.15, 0, 0, Math.PI * 2);
+        ctx.fill();
     }
-
-    // Cercle 1 : Base Sombre (Large)
-    ctx.fillStyle = tree.isOnFire ? '#b45309' : FOLIAGE_BASE;
-    ctx.beginPath(); ctx.arc(0, 0, tree.size * 0.6, 0, Math.PI*2); ctx.fill();
-
-    // Cercle 2 : Milieu (Décalé vers la lumière)
-    ctx.fillStyle = tree.isOnFire ? '#d97706' : FOLIAGE_MID;
-    ctx.beginPath(); ctx.arc(-4, -5, tree.size * 0.45, 0, Math.PI*2); ctx.fill();
-
-    // Cercle 3 : Highlight (Haut)
-    ctx.fillStyle = tree.isOnFire ? '#fbbf24' : FOLIAGE_LIGHT;
-    ctx.beginPath(); ctx.arc(-8, -10, tree.size * 0.25, 0, Math.PI*2); ctx.fill();
 
     // Effet de feu
     if (tree.isOnFire) {
         if (Math.random() > 0.7) {
             ctx.fillStyle = '#ef4444';
-            ctx.beginPath(); ctx.arc((Math.random()-0.5)*25, (Math.random()-0.5)*25, 3, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc((Math.random()-0.5)*20, -15 + (Math.random()-0.5)*20, 3, 0, Math.PI*2); ctx.fill();
         }
     }
 
-    ctx.restore();
+    ctx.restore(); // Fin wobble
+    ctx.restore(); // Fin global
 };
 
 // --- LOGIQUE DE COLLECTE DE BRANCHES ET PIERRES ---
@@ -146,62 +201,57 @@ export const resolveTreeCollisions = (
             const dy = tank.y - tree.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
             
-            const centerBlockRadius = 20; 
-            const tankRadius = TANK_SIZE / 2;
-            const minDist = centerBlockRadius + tankRadius;
+            const centerBlockRadius = 15; // Hitbox tronc réduite
+            const hitboxTank = tank.isSoldier ? (TANK_SIZE/2 - 10) : TANK_SIZE/2;
+            const minDist = centerBlockRadius + hitboxTank;
 
             if (dist < minDist) {
                 const angle = Math.atan2(dy, dx);
                 const pushX = Math.cos(angle);
                 const pushY = Math.sin(angle);
 
-                // --- NOUVELLE LOGIQUE : SAPLING (Petit arbre) vs GRAND ARBRE ---
                 if (tree.growth < TREE_SOLID_THRESHOLD) {
                     // ** PETIT ARBRE (Traversable mais ralentit) **
-                    
-                    // Ralentissement significatif (friction type boue)
                     tank.vx *= 0.8; 
                     tank.vy *= 0.8;
-
-                    // Faire bouger l'arbre (le tank "pousse" le feuillage)
+                    // Faire bouger l'arbre
                     const tankSpeed = Math.sqrt(tank.vx*tank.vx + tank.vy*tank.vy);
-                    if (tankSpeed > 0.1) {
-                        tree.wobbleVelX -= tank.vx * 0.1; // Reagit à la vitesse du tank
+                    if (tankSpeed > 0.1 && !tank.isSoldier) { // Soldat bouge peu l'arbre
+                        tree.wobbleVelX -= tank.vx * 0.1;
                         tree.wobbleVelY -= tank.vy * 0.1;
-                        
-                        // Son de feuillage fréquent si on roule dessus
-                        if (!tank.lastImpactTime || now - tank.lastImpactTime > 300) {
-                            AudioSystem.bushImpact();
-                            tank.lastImpactTime = now;
-                        }
                     }
-
                 } else {
                     // ** GRAND ARBRE (Solide) **
-                    
                     const overlap = minDist - dist;
                     tank.x += pushX * overlap;
                     tank.y += pushY * overlap;
 
-                    // REBOND DU TANK
-                    tank.vx -= pushX * 2.0;
-                    tank.vy -= pushY * 2.0;
-                    tank.vx *= 0.5; 
-                    tank.vy *= 0.5;
+                    // EFFET VISUEL (Impact) - Seulement si c'est un tank
+                    if (!tank.isSoldier) {
+                        // REBOND DU TANK
+                        tank.vx -= pushX * 2.0;
+                        tank.vy -= pushY * 2.0;
+                        tank.vx *= 0.5; 
+                        tank.vy *= 0.5;
 
-                    // EFFET VISUEL
-                    tree.wobbleVelX += pushX * 0.8; 
-                    tree.wobbleVelY += pushY * 0.8;
-                    
-                    // SON (Premier Impact)
-                    const tankSpeed = Math.sqrt(tank.vx*tank.vx + tank.vy*tank.vy);
-                    const IMPACT_COOLDOWN = 1000;
-                    
-                    if (tankSpeed > 1.0) {
-                        if (!tank.lastImpactTime || now - tank.lastImpactTime > IMPACT_COOLDOWN) {
-                            AudioSystem.bushImpact();
-                            tank.lastImpactTime = now;
+                        tree.wobbleVelX += pushX * 0.4;
+                        tree.wobbleVelY += pushY * 0.4;
+                        
+                        // SON
+                        const tankSpeed = Math.sqrt(tank.vx*tank.vx + tank.vy*tank.vy);
+                        const IMPACT_COOLDOWN = 1000;
+                        if (tankSpeed > 1.0) {
+                            if (!tank.lastImpactTime || now - tank.lastImpactTime > IMPACT_COOLDOWN) {
+                                AudioSystem.bushImpact();
+                                tank.lastImpactTime = now;
+                            }
                         }
+                    } else {
+                        // REBOND DU SOLDAT (Sans faire bouger l'arbre)
+                        tank.vx -= pushX * 3.0; // Rebond sec
+                        tank.vy -= pushY * 3.0;
+                        tank.vx *= 0.5;
+                        tank.vy *= 0.5;
                     }
                 }
             }
@@ -221,7 +271,7 @@ export const resolveTreeCollisions = (
             const dist = Math.sqrt(dx*dx + dy*dy);
 
             // Touche le feuillage
-            if (dist < tree.size * 0.45) {
+            if (dist < tree.size * 0.6) { // Hitbox feuillage
                 tree.health -= b.damage; 
                 bulletDestroyed = true;
                 AudioSystem.bushImpact();

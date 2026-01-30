@@ -1,6 +1,5 @@
 
-
-import { PlayerConfig, TerrainType, PowerUpType } from './types';
+import { PlayerConfig, TerrainType, PowerUpType, TankClass } from './types';
 
 // Canvas Dimensions (1080p Resolution)
 export const GAME_WIDTH = 1920;
@@ -11,18 +10,57 @@ export const BORDER_SIZE = 10; // Invisible wall thickness at edges
 export const TANK_SPEED = 3.0;
 export const TANK_ROTATION_SPEED = 0.06;
 export const BULLET_SPEED = 18.0;
+export const BULLET_MAX_RANGE = GAME_WIDTH / 2; // Portée = Moitié de l'écran
 export const TANK_SIZE = 52; 
 export const TANK_HITBOX_SIZE = 40; 
 export const BULLET_SIZE = 12;
 export const COOLDOWN_FRAMES = 30; 
 export const TRACK_SPACING = 12; // Lower spacing for smoother lines
 
+// --- STATS DES CLASSES ---
+export const CLASS_STATS = {
+    [TankClass.ASSAULT]: {
+        speed: 3.0,
+        health: 10,
+        damage: 1,
+        cooldown: 30, // Standard
+        bulletSpeed: 18.0,
+        bulletRange: GAME_WIDTH / 2
+    },
+    [TankClass.SNIPER]: {
+        speed: 2.2, // Plus lent
+        health: 6, // Plus fragile
+        damage: 3.5, // Très mal
+        cooldown: 90, // Tir lent (1.5s)
+        bulletSpeed: 35.0, // Balle très rapide
+        bulletRange: GAME_WIDTH // Traverse tout l'écran
+    },
+    [TankClass.HEAVY]: {
+        speed: 1.8, // Très lent
+        health: 20, // Sac à PV
+        damage: 1.5, // Dégâts corrects
+        cooldown: 45, // Tir un peu lent
+        bulletSpeed: 14.0, 
+        bulletRange: GAME_WIDTH / 2.5
+    },
+    [TankClass.SCOUT]: {
+        speed: 4.5, // Très rapide
+        health: 7, // Fragile
+        damage: 0.7, // Peu de dégâts
+        cooldown: 15, // Mitraillette
+        bulletSpeed: 20.0,
+        bulletRange: GAME_WIDTH / 3 // Portée courte
+    }
+};
+
 // Soldier (Infantry) Stats
 export const SOLDIER_SIZE = 14;
 export const SOLDIER_SPEED = 2.0; // Agile but slower top speed than tank
 export const SOLDIER_MAX_HEALTH = 1; // Dies in 1 hit/crush
-export const SOLDIER_COOLDOWN = 8; // Fast fire rate (Machine gun)
-export const SOLDIER_DAMAGE = 0.2; // Low damage
+export const SOLDIER_COOLDOWN = 5; // Very fast fire rate inside burst
+export const SOLDIER_DAMAGE = 0.34; // 3 hits = ~1 damage
+export const SOLDIER_BURST_COUNT = 5;
+export const SOLDIER_RELOAD_TIME = 4000; // 4 seconds reload
 
 // Destructibles & Powerups
 export const WALL_SIZE = 64;
@@ -39,7 +77,7 @@ export const ROCK_PUSH_FRICTION = 0.85; // Stops quickly
 export const DEBRIS_SLOW_FACTOR = 0.4; // Tanks move at 40% speed on stones
 
 // Trees
-export const TREE_SIZE = 56; // Slightly larger for better cover
+export const TREE_SIZE = 40; // Réduit (était 56) pour faire "plus petit"
 export const TREE_MAX_HEALTH = 4; // Takes 4 shots now
 export const TREE_REGROW_DELAY = 10000; // 10 seconds waiting as stump
 export const TREE_GROWTH_DURATION = 300000; // 5 minutes to full size (300,000ms)
@@ -51,14 +89,32 @@ export const BUNKER_MAX_HEALTH = 25; // 25 Missiles to destroy
 export const BUNKER_LEVEL_2_HEALTH_BONUS = 10; // Bonus PV au passage niveau 2
 export const BUNKER_REPAIR_AMOUNT = 5;
 export const TANK_HEAL_INTERVAL = 10000;
-export const WATER_COLLECT_INTERVAL = 5000; // 5 secondes pour prendre de l'eau
+export const WATER_COLLECT_INTERVAL = 3000; // 3 secondes pour prendre de l'eau
 export const INVENTORY_BASE_CAPACITY = 3; // Starts at 3, +1 per level
+
+export const MAX_WATER_CAPACITY = 4; // TANK MAX WATER
+export const BUNKER_WATER_MAX_CAPACITY = 24; // Visual limit around perimeter
 
 export const BUNKER_UPGRADE_COST_STONE_L2 = 20; // 20 Pierres requises
 export const BUNKER_UPGRADE_COST_WOOD_L2 = 20;  // 20 Bois requis
 export const BUNKER_UPGRADE_COST_STONE_L3 = 50;
 export const BUNKER_UPGRADE_COST_WOOD_L3 = 50;
 export const BUNKER_UPGRADE_HITS_REQUIRED = 3; // 3 Tirs pour valider l'upgrade
+
+// REPAIR STATION COSTS
+export const REPAIR_STATION_COST_WATER = 20;
+export const REPAIR_STATION_COST_WOOD = 10;
+export const REPAIR_STATION_COST_STONE = 10;
+export const REPAIR_STATION_HEAL_RATE = 200; // ms per heal tick
+export const REPAIR_STATION_HEAL_AMOUNT = 0.1; // HP per tick
+export const REPAIR_STATION_BUILD_HITS = 2; // Nécessite 2 tirs du propriétaire pour construire
+
+// MUNITIONS FACTORY (NEW)
+export const FACTORY_COST_WOOD = 15;
+export const FACTORY_COST_STONE = 15;
+export const FACTORY_BUILD_HITS = 3;
+export const FACTORY_PRODUCTION_RATE = 15000; // 15 secondes par munition
+export const FACTORY_AMMO_AMOUNT = 5; // 5 munitions par caisse
 
 export const BUNKER_SHIELD_COST_ELECTRONICS = 2; // Cost for Electric Shield
 export const STUN_DURATION = 5000; // 5 seconds immobilization
@@ -75,11 +131,13 @@ export const TURRET_DAMAGE = 1;
 // Drones
 export const DRONE_SIZE = 24;
 export const DRONE_MAX_HEALTH = 3;
-export const DRONE_SPEED = 2.5; // Rapide (Chasseur)
+export const DRONE_SPEED = 1.5; // Plus lent (was 2.5) pour permettre l'oscillation
 export const DRONE_SPAWN_RATE = 120000; // 2 minutes (120,000ms)
 export const DRONE_COOLDOWN = 60; 
-export const DRONE_DAMAGE = 3; // Dégâts d'explosion
+export const DRONE_DAMAGE = 3; // Dégâts d'explosion (Kamikaze)
 export const DRONE_RANGE = 40; // Rayon de contact
+export const DRONE_SHOOT_RATE = 3000; // Tir tous les 3s
+export const DRONE_SHOOT_RANGE = 300; // Portée de tir
 
 // Mechas (Level 3)
 export const MECHA_SIZE = 40;
@@ -152,6 +210,7 @@ export const DEFAULT_CONTROLS: PlayerConfig[] = [
     name: 'Joueur 1',
     color: COLORS.p1,
     active: true,
+    tankClass: TankClass.ASSAULT, // Default Class
     controls: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', shoot: 'Space' },
   },
   {
@@ -159,6 +218,7 @@ export const DEFAULT_CONTROLS: PlayerConfig[] = [
     name: 'Joueur 2',
     color: COLORS.p2,
     active: true,
+    tankClass: TankClass.ASSAULT,
     controls: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', shoot: 'ControlRight' },
   },
   {
@@ -166,6 +226,7 @@ export const DEFAULT_CONTROLS: PlayerConfig[] = [
     name: 'Joueur 3',
     color: COLORS.p3,
     active: false,
+    tankClass: TankClass.ASSAULT,
     controls: { up: 'Numpad8', down: 'Numpad5', left: 'Numpad4', right: 'Numpad6', shoot: 'Enter' },
   },
   {
@@ -173,10 +234,11 @@ export const DEFAULT_CONTROLS: PlayerConfig[] = [
     name: 'Joueur 4',
     color: COLORS.p4,
     active: false,
+    tankClass: TankClass.ASSAULT,
     controls: { up: 'KeyI', down: 'KeyK', left: 'KeyJ', right: 'KeyL', shoot: 'Semicolon' },
   },
 ];
 
-export const MAX_TRACKS = 2500; 
-export const TRACK_FADE_DURATION = 40000; 
+export const MAX_TRACKS = 5000; // Increased to handle double tracks + persistency
+export const TRACK_FADE_DURATION = 60000; // 1 Minute to fade down
 export const MAX_REPLAY_FRAMES = 3600;
